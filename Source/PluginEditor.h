@@ -1,0 +1,160 @@
+#pragma once
+#include <JuceHeader.h>
+#include "PluginProcessor.h"
+
+namespace RVColours
+{
+    const juce::Colour bg      { 0xff0c0e12 };
+    const juce::Colour panel   { 0xff161920 };
+    const juce::Colour panel2  { 0xff1e222b };
+    const juce::Colour outline { 0xff2b303b };
+    const juce::Colour text    { 0xffe6e9ef };
+    const juce::Colour textDim { 0xff8a92a3 };
+    const juce::Colour accent  { 0xff2ee6d6 };
+    const juce::Colour hitCol  { 0xffffb347 };
+
+    // waveform / shape colour driven by Color (tone) and Bass Cut knobs
+    juce::Colour swellColour (float toneHz, float bassCutHz);
+}
+
+class RVLookAndFeel : public juce::LookAndFeel_V4
+{
+public:
+    RVLookAndFeel();
+    void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos, float startAngle, float endAngle, juce::Slider&) override;
+    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool, bool) override;
+    void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool, bool) override;
+    juce::Font getTextButtonFont (juce::TextButton&, int) override;
+    juce::Label* createSliderTextBox (juce::Slider&) override;
+    void drawComboBox (juce::Graphics&, int, int, bool, int, int, int, int, juce::ComboBox&) override;
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::Font (juce::FontOptions (12.0f)); }
+    void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override;
+};
+
+class DiffusionShape : public juce::Component, private juce::Timer
+{
+public:
+    explicit DiffusionShape (ReverseVerbProcessor& p) : proc (p) { setInterceptsMouseClicks (false, false); startTimerHz (30); }
+    void paint (juce::Graphics&) override;
+private:
+    void timerCallback() override { angle += 0.012f; repaint(); }
+    ReverseVerbProcessor& proc;
+    float angle = 0.0f;
+};
+
+class WaveformDisplay : public juce::Component, private juce::Timer
+{
+public:
+    explicit WaveformDisplay (ReverseVerbProcessor&);
+    void paint (juce::Graphics&) override;
+    void resized() override { rebuild(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+private:
+    enum class Drag { none, trimEnd, trimStart, volStart, volEnd, volTension };
+    void timerCallback() override;
+    void rebuild();
+    juce::Rectangle<float> plot() const;
+    float volY (float level) const;
+    ReverseVerbProcessor& proc;
+    std::shared_ptr<const RenderedSample> cached;
+    juce::Path swellPath, hitPath;
+    int total = 0, hitIndex = -1, lastPlayhead = -2;
+    float lastTone = -1, lastBass = -1, lastV0 = -1, lastV1 = -1, lastVT = -9;
+    Drag drag = Drag::none, hover = Drag::none;
+    juce::Point<float> downPos;
+    float downA = 0, downB = 0, downSpan = 1;
+    bool moved = false;
+};
+
+class TensionBox : public juce::Component, private juce::Timer
+{
+public:
+    TensionBox (ReverseVerbProcessor& p, const juce::String& id) : proc (p), paramId (id) { startTimerHz (15); }
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent& e) override { downT = proc.param (paramId); downY = e.y; }
+    void mouseDrag (const juce::MouseEvent& e) override { proc.setParam (paramId, juce::jlimit (-1.0f, 1.0f, downT + (float) (downY - e.y) / 60.0f)); repaint(); }
+    void mouseDoubleClick (const juce::MouseEvent&) override { proc.setParam (paramId, 0.0f); repaint(); }
+private:
+    void timerCallback() override { const float t = proc.param (paramId); if (t != shown) { shown = t; repaint(); } }
+    ReverseVerbProcessor& proc;
+    juce::String paramId;
+    float downT = 0, shown = -9; int downY = 0;
+};
+
+class DragOutPad : public juce::Component
+{
+public:
+    explicit DragOutPad (ReverseVerbProcessor& p) : proc (p) {}
+    void paint (juce::Graphics&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseEnter (const juce::MouseEvent&) override { over = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { over = false; repaint(); }
+private:
+    ReverseVerbProcessor& proc;
+    bool dragging = false, over = false;
+};
+
+class HelpOverlay : public juce::Component
+{
+public:
+    HelpOverlay();
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent&) override { setVisible (false); }
+private:
+    juce::TextEditor body;
+    juce::TextButton closeButton { "CLOSE" };
+};
+
+class ReverseVerbEditor : public juce::AudioProcessorEditor,
+                          public juce::DragAndDropContainer,
+                          public juce::FileDragAndDropTarget,
+                          private juce::Timer
+{
+public:
+    explicit ReverseVerbEditor (ReverseVerbProcessor&);
+    ~ReverseVerbEditor() override;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int, int) override;
+
+private:
+    struct Knob
+    {
+        juce::Slider slider; juce::Label label;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
+    };
+    struct Group { juce::String name; juce::Rectangle<int> bounds; };
+
+    void timerCallback() override;
+    Knob& makeKnob (const juce::String& id, const juce::String& text);
+    void layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks);
+
+    ReverseVerbProcessor& proc;
+    RVLookAndFeel lnf;
+
+    juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel;
+    juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
+                     exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
+    juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
+    juce::ComboBox syncCombo, rangeCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
+
+    WaveformDisplay waveform;
+    DiffusionShape shape;
+    DragOutPad dragPad;
+    TensionBox pitchTension;
+    HelpOverlay help;
+
+    std::vector<std::unique_ptr<Knob>> knobs;
+    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass, *kDry, *kWet, *kPitch, *kVolStart, *kVolEnd, *kVolTension;
+    std::vector<Group> groups;
+    std::unique_ptr<juce::FileChooser> chooser;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReverseVerbEditor)
+};
