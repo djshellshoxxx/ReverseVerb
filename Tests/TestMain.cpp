@@ -27,7 +27,10 @@ int main()
 
     ConsoleTestRunner runner;
     runner.setAssertOnFailure (false);
-    runner.runAllTests (0x52565632);
+    // JUCE itself registers a large platform-dependent test suite whenever
+    // JUCE_UNIT_TESTS is enabled. Run only this project's tests so a framework
+    // assertion cannot turn a plugin regression run into a SIGTRAP.
+    runner.runTestsInCategory ("DSP", 0x52565632);
 
     int failureCount = 0;
     for (int i = 0; i < runner.getNumResults(); ++i)
