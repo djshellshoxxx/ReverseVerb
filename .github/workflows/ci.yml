@@ -32,7 +32,9 @@ jobs:
             os: ubuntu-latest
             plugin_targets: ReverseVerb_VST3 ReverseVerb_Standalone
           - name: Windows
-            os: windows-latest
+            # windows-latest moved to VS 2026 in June 2026. JUCE and this
+            # preset intentionally target the widely available VS 2022 toolchain.
+            os: windows-2022
             plugin_targets: ReverseVerb_VST3 ReverseVerb_Standalone
             configure_debug: windows
             build_debug: build-windows-debug
