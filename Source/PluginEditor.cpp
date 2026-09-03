@@ -576,6 +576,7 @@ static const char* kHelpText = R"(REVERSE VERB - what everything does
 WORKFLOW
   LOAD (or drop a file on the window) picks a hit. < > steps through every sample in that folder and auto-plays it with your current settings.
   Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.
+  Right-click a knob for host automation commands (when the DAW provides them) and Reset to default.
   EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
   Hit on note (PDC): reports the swell length as latency so the DRY HIT lands exactly on the note and the swell starts early. Turn off if you'd rather place notes early yourself.
   RESET EDITS clears trim, pitch and volume envelope. RANDOM rolls new reverb settings.
@@ -636,6 +637,49 @@ void HelpOverlay::resized()
     closeButton.setBounds (r.removeFromBottom (30).withSizeKeepingCentre (100, 30));
     r.removeFromBottom (10);
     body.setBounds (r);
+}
+
+// ---------------- Host parameter context menu ----------------
+
+void HostContextSlider::setHostParameter (juce::AudioProcessorEditor& owner,
+                                          juce::AudioProcessorParameter& hostParameter)
+{
+    editor = &owner;
+    parameter = &hostParameter;
+}
+
+void HostContextSlider::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+    {
+        juce::Slider::mouseDown (e);
+        return;
+    }
+
+    juce::PopupMenu menu;
+
+    if (editor != nullptr && parameter != nullptr)
+        if (auto* hostContext = editor->getHostContext())
+            if (auto hostMenu = hostContext->getContextMenuForParameter (parameter))
+                menu = hostMenu->getEquivalentPopupMenu();
+
+    // Standalone builds and hosts without the optional VST3 context-menu
+    // extension still get a useful, host-independent command. In compatible
+    // hosts it is appended to commands such as automation-lane creation.
+    if (menu.getNumItems() > 0)
+        menu.addSeparator();
+
+    menu.addItem ("Reset to default", parameter != nullptr, false,
+                  [safeThis = juce::Component::SafePointer<HostContextSlider> (this)]
+                  {
+                      if (safeThis == nullptr || safeThis->parameter == nullptr)
+                          return;
+
+                      safeThis->parameter->beginChangeGesture();
+                      safeThis->parameter->setValueNotifyingHost (safeThis->parameter->getDefaultValue());
+                      safeThis->parameter->endChangeGesture();
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
 }
 
 // ---------------- Editor ----------------
@@ -733,6 +777,10 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
 {
     auto k = std::make_unique<Knob>();
     auto& s = k->slider;
+    if (auto* parameter = proc.apvts.getParameter (id))
+        s.setHostParameter (*this, *parameter);
+    else
+        jassertfalse;
     s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 15);
     s.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
