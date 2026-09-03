@@ -345,6 +345,14 @@ void ReverseVerbProcessor::replaceGatePattern (const rv::GatePattern& pattern,
 {
     const auto clean = rv::sanitiseGatePattern (pattern);
     undoManager.beginNewTransaction (transactionName);
+    const auto requestedStepChoice = clean.activeSteps == 32 ? 1.0f : 0.0f;
+    if (std::abs (gateStepsParam->load() - requestedStepChoice) > 0.1f)
+        if (auto* parameter = apvts.getParameter (IDs::gateSteps))
+        {
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (requestedStepChoice));
+            parameter->endChangeGesture();
+        }
     storeGatePatternInState (clean, &undoManager);
     publishGatePattern (clean);
 }

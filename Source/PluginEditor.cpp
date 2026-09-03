@@ -1009,10 +1009,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     gatePaste.onClick = [this]
     {
         if (const auto pattern = rv::decodeGatePattern (juce::SystemClipboard::getTextFromClipboard()))
-        {
-            proc.setParam (IDs::gateSteps, pattern->activeSteps == 32 ? 1.0f : 0.0f);
             proc.replaceGatePattern (*pattern, "Paste gate pattern");
-        }
     };
     gateUndo.onClick = [this]
     {
