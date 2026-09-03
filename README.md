@@ -14,6 +14,7 @@ Load a hit, dial in the reverb, and you instantly get a reversed-reverb swell th
 - Sync total length to host BPM: 1 / 2 / 4 / 8 beats or 1 / 2 / 4 bars, with beat lines on the waveform
 - Hit on note (PDC) so the dry hit lands exactly on the MIDI note
 - Live readout of time, pitch and volume during playback
+- Host-aware knob menus: right-click a parameter for DAW automation commands where supported, plus Reset to default
 - Drag-to-DAW, WAV export, random reverb, built-in help (`?`)
 
 ## Build (Windows)
