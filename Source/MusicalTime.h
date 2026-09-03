@@ -90,6 +90,7 @@ inline constexpr std::array<Division, static_cast<std::size_t> (Division::count)
 };
 
 [[nodiscard]] std::string_view divisionLabel (Division division) noexcept;
+[[nodiscard]] Division legacyDivision (int legacyChoice) noexcept;
 [[nodiscard]] double quarterNotes (Division division, TimeSignature timeSignature) noexcept;
 [[nodiscard]] std::int64_t durationSamples (Division division,
                                             double bpm,

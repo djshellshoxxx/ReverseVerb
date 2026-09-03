@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "GatePatternClipboard.h"
 
 using namespace RVColours;
 
@@ -316,17 +317,22 @@ void WaveformDisplay::paint (juce::Graphics& g)
     const double sr = cached->sampleRate;
     const double lenSec = total / sr;
 
-    // beat lines (sync)
-    if (cached->beats > 0)
+    // Musical grid uses the same rational duration model as rendering.
+    if (cached->musicalQuarterNotes > 0.0 && cached->bpm > 0.0)
     {
-        const double beatSec = cached->fullLengthSec / cached->beats;
         const double span = cached->trimEndSec - cached->trimStartSec;
-        for (int b = 0; b <= cached->beats; ++b)
+        const double barQuarterNotes = cached->timeSignatureNumerator * 4.0
+                                     / cached->timeSignatureDenominator;
+        const int lineCount = (int) std::ceil (cached->musicalQuarterNotes / cached->gridQuarterNotes);
+        for (int line = 0; line <= lineCount; ++line)
         {
-            const double t = b * beatSec - cached->trimStartSec;
+            const double quarterNote = juce::jmin (cached->musicalQuarterNotes,
+                                                   line * cached->gridQuarterNotes);
+            const double t = quarterNote * 60.0 / cached->bpm - cached->trimStartSec;
             if (t < -0.0005 || t > span + 0.0005) continue;
             const float x = p.getX() + p.getWidth() * (float) (t / span);
-            const bool bar = (b % cached->beatsPerBar) == 0;
+            const double remainder = std::fmod (quarterNote, barQuarterNotes);
+            const bool bar = remainder < 1.0e-8 || barQuarterNotes - remainder < 1.0e-8;
             g.setColour (bar ? juce::Colour (0xffff4d4d).withAlpha (0.9f) : juce::Colour (0xffff4d4d).withAlpha (0.45f));
             g.drawLine (x, p.getY(), x, p.getBottom(), bar ? 1.5f : 1.0f);
         }
@@ -602,13 +608,20 @@ SWELL
   COLOR: low-pass filter on the swell.  BASS CUT: high-pass filter on the swell, keeps sub out of your break.
 
 SYNC
-  SYNC locks the total length (swell + hit) to the host tempo. Pick 1/2/4/8 beats or 1/2/4 bars. Re-renders automatically when BPM changes.
+  SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-8 bar lengths from 1/64T upward.
 
 PITCH
   PITCH sweeps the pitch from 0 at the start to the knob amount at the end. Range chooses 1, 2 or 4 octaves. CURVE box: drag up/down to change how fast the sweep happens.
 
 MIX
   HIT: level of the dry hit.  SWELL: level of the wet rise or fall.
+
+GATOR
+  Paint 16 or 32 step levels; hold Shift while dragging to draw a straight ramp. RATE sets each step from 1/64T to 1/4D.
+  DEPTH blends the gate with the original sound. SMOOTH removes clicks. SWING lengthens odd steps and shortens even steps. PHASE rotates timing continuously.
+  NOTE restarts the pattern for every hit. HOST locks it to the DAW PPQ timeline and falls back to NOTE when the host supplies no PPQ.
+  TARGET gates the SWELL, HIT, or BOTH layers. SHAPE chooses Square, Smooth, Ramp Up/Down, Triangle, Sine, or Curved movement inside each step.
+  CLEAR, FILL, INVERT, RANDOM, rotate, COPY/PASTE, and UNDO/REDO edit the pattern without interrupting audio.
 )";
 
 HelpOverlay::HelpOverlay()
@@ -710,10 +723,158 @@ void HostContextComboBox::mouseDown (const juce::MouseEvent& e)
     showHostParameterMenu (*this, editor, parameter);
 }
 
+void HostContextToggleButton::setHostParameter (juce::AudioProcessorEditor& owner,
+                                                juce::AudioProcessorParameter& hostParameter)
+{
+    editor = &owner;
+    parameter = &hostParameter;
+}
+
+void HostContextToggleButton::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+    {
+        juce::ToggleButton::mouseDown (e);
+        return;
+    }
+    showHostParameterMenu (*this, editor, parameter);
+}
+
+// ---------------- Gator pattern editor ----------------
+
+GatePatternEditor::GatePatternEditor (ReverseVerbProcessor& processor) : proc (processor)
+{
+    setTitle ("Gator step levels");
+    setDescription ("Paint 16 or 32 tempo-synced gate levels. Hold Shift and drag to draw a line.");
+    setWantsKeyboardFocus (true);
+    cached = proc.getGatePattern();
+    activeSteps = proc.getGateSettings().activeSteps;
+    if (cached != nullptr)
+        working = *cached;
+    startTimerHz (20);
+}
+
+int GatePatternEditor::stepAt (float x) const noexcept
+{
+    if (getWidth() <= 0)
+        return 0;
+    return juce::jlimit (0, activeSteps - 1,
+                         (int) std::floor (x * activeSteps / (float) getWidth()));
+}
+
+float GatePatternEditor::valueAt (float y) const noexcept
+{
+    return juce::jlimit (0.0f, 1.0f,
+                         1.0f - y / (float) juce::jmax (1, getHeight() - 1));
+}
+
+void GatePatternEditor::drawLine (int fromStep, float fromValue, int toStep, float toValue)
+{
+    if (fromStep > toStep)
+    {
+        std::swap (fromStep, toStep);
+        std::swap (fromValue, toValue);
+    }
+    const auto span = juce::jmax (1, toStep - fromStep);
+    for (int step = fromStep; step <= toStep; ++step)
+    {
+        const auto amount = (float) (step - fromStep) / (float) span;
+        working.steps[(size_t) step] = juce::jlimit (0.0f, 1.0f,
+                                                     fromValue + amount * (toValue - fromValue));
+    }
+}
+
+void GatePatternEditor::mouseDown (const juce::MouseEvent& event)
+{
+    if (const auto snapshot = proc.getGatePattern())
+    {
+        cached = snapshot;
+        working = *snapshot;
+    }
+    activeSteps = proc.getGateSettings().activeSteps;
+    working.activeSteps = activeSteps;
+    firstStep = lastStep = stepAt ((float) event.x);
+    firstValue = valueAt ((float) event.y);
+    working.steps[(size_t) firstStep] = firstValue;
+    dragging = true;
+    repaint();
+}
+
+void GatePatternEditor::mouseDrag (const juce::MouseEvent& event)
+{
+    if (! dragging)
+        return;
+    const auto currentStep = stepAt ((float) event.x);
+    const auto currentValue = valueAt ((float) event.y);
+    if (event.mods.isShiftDown())
+    {
+        if (cached != nullptr)
+            working = *cached;
+        working.activeSteps = activeSteps;
+        drawLine (firstStep, firstValue, currentStep, currentValue);
+    }
+    else
+    {
+        const auto from = juce::jmin (lastStep, currentStep);
+        const auto to = juce::jmax (lastStep, currentStep);
+        for (int step = from; step <= to; ++step)
+            working.steps[(size_t) step] = currentValue;
+    }
+    lastStep = currentStep;
+    repaint();
+}
+
+void GatePatternEditor::mouseUp (const juce::MouseEvent&)
+{
+    if (! dragging)
+        return;
+    dragging = false;
+    proc.replaceGatePattern (working, "Paint gate pattern");
+    cached = proc.getGatePattern();
+    repaint();
+}
+
+void GatePatternEditor::timerCallback()
+{
+    const auto steps = proc.getGateSettings().activeSteps;
+    const auto snapshot = proc.getGatePattern();
+    if (! dragging && (snapshot != cached || steps != activeSteps))
+    {
+        cached = snapshot;
+        activeSteps = steps;
+        if (cached != nullptr)
+            working = *cached;
+        repaint();
+    }
+}
+
+void GatePatternEditor::paint (juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+    g.setColour (bg.withAlpha (0.65f));
+    g.fillRoundedRectangle (bounds, 5.0f);
+    g.setColour (outline);
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 5.0f, 1.0f);
+
+    const auto& pattern = dragging || cached == nullptr ? working : *cached;
+    const auto width = bounds.getWidth() / (float) activeSteps;
+    for (int step = 0; step < activeSteps; ++step)
+    {
+        auto cell = juce::Rectangle<float> (bounds.getX() + step * width, bounds.getY(), width, bounds.getHeight()).reduced (1.0f);
+        const auto level = juce::jlimit (0.0f, 1.0f, pattern.steps[(size_t) step]);
+        auto bar = cell.withTop (cell.getBottom() - level * cell.getHeight());
+        g.setColour ((step % 4 == 0 ? accent.brighter (0.15f) : accent).withAlpha (0.25f + level * 0.75f));
+        g.fillRoundedRectangle (bar, 2.0f);
+        g.setColour (outline.withAlpha (step % 4 == 0 ? 0.9f : 0.45f));
+        g.drawVerticalLine ((int) cell.getX(), cell.getY(), cell.getBottom());
+    }
+}
+
 // ---------------- Editor ----------------
 
 ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension)
+    : AudioProcessorEditor (&p), proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension),
+      gatePatternEditor (p)
 {
     setLookAndFeel (&lnf);
 
@@ -742,18 +903,76 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     addAndMakeVisible (shape);
     addAndMakeVisible (dragPad);
     addAndMakeVisible (pitchTension);
+    addAndMakeVisible (gatePatternEditor);
+    addAndMakeVisible (gateToggle);
+    for (auto* combo : { &gateStepsCombo, &gateRateCombo, &gateRetriggerCombo, &gateTargetCombo, &gateShapeCombo })
+        addAndMakeVisible (combo);
+    for (auto* button : { &gateClear, &gateFill, &gateInvert, &gateRandom, &gateLeft, &gateRight,
+                          &gateCopy, &gatePaste, &gateUndo, &gateRedo })
+        addAndMakeVisible (button);
 
-    syncCombo.addItemList ({ "1 beat", "2 beats", "4 beats", "8 beats", "1 bar", "2 bars", "4 bars" }, 1);
+    for (const auto division : rv::allDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        syncCombo.addItem (juce::String::fromUTF8 (label.data(), (int) label.size()), (int) division + 1);
+    }
     rangeCombo.addItemList ({ "1 oct", "2 oct", "4 oct" }, 1);
     directionCombo.addItemList ({ "RISE", "FALL" }, 1);
     addAndMakeVisible (syncCombo);
     addAndMakeVisible (rangeCombo);
     addAndMakeVisible (directionCombo);
-    syncComboAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::syncLen, syncCombo);
+    syncComboAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::syncDivisionV2, syncCombo);
     rangeComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::pitchRange, rangeCombo);
     directionAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::direction, directionCombo);
     alignAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
     syncAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync, syncToggle);
+
+    gateStepsCombo.addItemList ({ "16", "32" }, 1);
+    for (const auto division : rv::gateRateDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        gateRateCombo.addItem (juce::String::fromUTF8 (label.data(), (int) label.size()),
+                               gateRateCombo.getNumItems() + 1);
+    }
+    gateRetriggerCombo.addItemList ({ "NOTE", "HOST" }, 1);
+    gateTargetCombo.addItemList ({ "SWELL", "HIT", "BOTH" }, 1);
+    gateShapeCombo.addItemList ({ "SQUARE", "SMOOTH", "RAMP UP", "RAMP DOWN", "TRIANGLE", "SINE", "CURVED" }, 1);
+    gateEnabledAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::gateEnabled, gateToggle);
+    gateStepsAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::gateSteps, gateStepsCombo);
+    gateRateAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::gateRate, gateRateCombo);
+    gateRetriggerAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::gateRetrigger, gateRetriggerCombo);
+    gateTargetAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::gateTarget, gateTargetCombo);
+    gateShapeAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::gateShape, gateShapeCombo);
+
+    gateToggle.setTooltip ("Enable the tempo-synced gator. Right-click for host automation.");
+    gateStepsCombo.setTooltip ("Pattern length: 16 or 32 steps.");
+    gateRateCombo.setTooltip ("Tempo division for each gate step.");
+    gateRetriggerCombo.setTooltip ("NOTE restarts each pattern per hit; HOST locks all notes to the DAW timeline.");
+    gateTargetCombo.setTooltip ("Apply the gate to the swell, dry hit, or both layers.");
+    gateShapeCombo.setTooltip ("Envelope shape applied inside every open gate step.");
+    gateStepsCombo.setTitle ("Gator step count");
+    gateRateCombo.setTitle ("Gator rate");
+    gateRetriggerCombo.setTitle ("Gator retrigger mode");
+    gateTargetCombo.setTitle ("Gator target layer");
+    gateShapeCombo.setTitle ("Gator shape");
+    gateClear.setTooltip ("Set every gate step to zero.");
+    gateFill.setTooltip ("Set every gate step to full level.");
+    gateInvert.setTooltip ("Invert all gate levels.");
+    gateRandom.setTooltip ("Generate deterministic random gate levels and advance the stored seed.");
+    gateLeft.setTooltip ("Rotate active gate steps left.");
+    gateRight.setTooltip ("Rotate active gate steps right.");
+    gateCopy.setTooltip ("Copy the complete gate pattern to the clipboard.");
+    gatePaste.setTooltip ("Paste a validated ReverseVerb gate pattern from the clipboard.");
+    gateUndo.setTooltip ("Undo the last gate pattern edit.");
+    gateRedo.setTooltip ("Redo the last gate pattern edit.");
+    for (const auto& binding : std::initializer_list<std::pair<HostContextComboBox*, const juce::String*>> {
+             { &gateStepsCombo, &IDs::gateSteps }, { &gateRateCombo, &IDs::gateRate },
+             { &gateRetriggerCombo, &IDs::gateRetrigger }, { &gateTargetCombo, &IDs::gateTarget },
+             { &gateShapeCombo, &IDs::gateShape } })
+        if (auto* parameter = proc.apvts.getParameter (*binding.second))
+            binding.first->setHostParameter (*this, *parameter);
+    if (auto* parameter = proc.apvts.getParameter (IDs::gateEnabled))
+        gateToggle.setHostParameter (*this, *parameter);
 
     directionCombo.setTitle ("Reverb direction");
     directionCombo.setTooltip ("RISE: reversed wet swell before the hit. FALL: dry hit followed by forward reverb.");
@@ -772,6 +991,39 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     resetButton.onClick  = [this] { proc.resetEdits(); };
     randomButton.onClick = [this] { proc.randomizeReverb(); };
     helpButton.onClick   = [this] { help.setVisible (true); help.toFront (true); };
+    gateClear.onClick = [this] { proc.clearGatePattern(); };
+    gateFill.onClick = [this] { proc.fillGatePattern(); };
+    gateInvert.onClick = [this] { proc.invertGatePattern(); };
+    gateRandom.onClick = [this] { proc.randomizeGatePattern(); };
+    gateLeft.onClick = [this] { proc.rotateGatePattern (-1); };
+    gateRight.onClick = [this] { proc.rotateGatePattern (1); };
+    gateCopy.onClick = [this]
+    {
+        if (const auto pattern = proc.getGatePattern())
+        {
+            auto copy = *pattern;
+            copy.activeSteps = proc.getGateSettings().activeSteps;
+            juce::SystemClipboard::copyTextToClipboard (rv::encodeGatePattern (copy));
+        }
+    };
+    gatePaste.onClick = [this]
+    {
+        if (const auto pattern = rv::decodeGatePattern (juce::SystemClipboard::getTextFromClipboard()))
+        {
+            proc.setParam (IDs::gateSteps, pattern->activeSteps == 32 ? 1.0f : 0.0f);
+            proc.replaceGatePattern (*pattern, "Paste gate pattern");
+        }
+    };
+    gateUndo.onClick = [this]
+    {
+        if (proc.getUndoManager().undo())
+            proc.refreshGatePatternFromState();
+    };
+    gateRedo.onClick = [this]
+    {
+        if (proc.getUndoManager().redo())
+            proc.refreshGatePatternFromState();
+    };
 
     loadButton.onClick = [this]
     {
@@ -799,10 +1051,16 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kDry = &makeKnob (IDs::dry, "HIT");          kWet = &makeKnob (IDs::wet, "SWELL");
     kPitch = &makeKnob (IDs::pitch, "PITCH");
     kVolStart = &makeKnob (IDs::volStart, "START"); kVolEnd = &makeKnob (IDs::volEnd, "END"); kVolTension = &makeKnob (IDs::volTension, "TENSION");
+    kGateDepth = &makeKnob (IDs::gateDepth, "DEPTH");
+    kGateSmooth = &makeKnob (IDs::gateSmooth, "SMOOTH");
+    kGateSwing = &makeKnob (IDs::gateSwing, "SWING");
+    kGatePhase = &makeKnob (IDs::gatePhase, "PHASE");
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, hitCol);
 
     addChildComponent (help);
-    setSize (1060, 720);
+    setResizable (true, true);
+    setResizeLimits (1060, 860, 1600, 1200);
+    setSize (1180, 920);
     startTimerHz (10);
     timerCallback();
 }
@@ -844,6 +1102,11 @@ void ReverseVerbEditor::timerCallback()
     kTail->slider.setAlpha (sync ? 0.4f : 1.0f);
     syncCombo.setEnabled (sync);
     syncCombo.setAlpha (sync ? 1.0f : 0.5f);
+    if (! proc.isUsingV2SyncDivision())
+        syncCombo.setSelectedItemIndex ((int) proc.getSyncDivision(), juce::dontSendNotification);
+    const auto timing = proc.getHostTiming();
+    syncToggle.setButtonText ("SYNC " + juce::String (timing.timeSignature.numerator)
+                              + "/" + juce::String (timing.timeSignature.denominator));
     alignToggle.setEnabled (rise);
     alignToggle.setAlpha (rise ? 1.0f : 0.45f);
     alignToggle.setTooltip (rise ? "Align the dry hit to the note using plugin delay compensation."
@@ -851,6 +1114,8 @@ void ReverseVerbEditor::timerCallback()
     const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     for (auto* k : { kTone, kBass, kWet, kTail, kShape })
         if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col) { k->slider.setColour (juce::Slider::rotarySliderFillColourId, col); k->slider.repaint(); }
+    gateUndo.setEnabled (proc.getUndoManager().canUndo());
+    gateRedo.setEnabled (proc.getUndoManager().canRedo());
 }
 
 void ReverseVerbEditor::paint (juce::Graphics& g)
@@ -929,15 +1194,10 @@ void ReverseVerbEditor::resized()
     directionCombo.setBounds (row.removeFromLeft (86)); row.removeFromLeft (8);
     alignToggle.setBounds (row.removeFromLeft (150));   row.removeFromLeft (10);
     syncCombo.setBounds (row.removeFromRight (100));    row.removeFromRight (6);
-    syncToggle.setBounds (row.removeFromRight (70));
+    syncToggle.setBounds (row.removeFromRight (86));
 
-    // knob rows
+    // Gator and knob rows
     area.removeFromTop (12);
-    const int rowH = (area.getHeight() - 10) / 2;
-    auto rowA = area.removeFromTop (rowH);
-    area.removeFromTop (10);
-    auto rowB = area;
-
     auto group = [&] (juce::Rectangle<int>& src, int width, const juce::String& name)
     {
         auto r = src.removeFromLeft (width);
@@ -945,6 +1205,38 @@ void ReverseVerbEditor::resized()
         groups.push_back ({ name, r });
         return r.reduced (6).withTrimmedTop (14);
     };
+
+    auto gateBounds = area.removeFromBottom (190);
+    area.removeFromBottom (10);
+    groups.push_back ({ "GATOR", gateBounds });
+    auto gateArea = gateBounds.reduced (8).withTrimmedTop (16);
+    auto gateKnobs = gateArea.removeFromRight (360);
+    gateArea.removeFromRight (8);
+    layoutKnobs (gateKnobs, { kGateDepth, kGateSmooth, kGateSwing, kGatePhase });
+
+    auto gateControls = gateArea.removeFromTop (28);
+    gateToggle.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
+    gateStepsCombo.setBounds (gateControls.removeFromLeft (54)); gateControls.removeFromLeft (4);
+    gateRateCombo.setBounds (gateControls.removeFromLeft (68)); gateControls.removeFromLeft (4);
+    gateRetriggerCombo.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
+    gateTargetCombo.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
+    gateShapeCombo.setBounds (gateControls.removeFromLeft (112));
+    gateArea.removeFromTop (5);
+
+    auto gateButtons = gateArea.removeFromTop (26);
+    const std::array<juce::TextButton*, 10> buttons { &gateClear, &gateFill, &gateInvert, &gateRandom,
+                                                     &gateLeft, &gateRight, &gateCopy, &gatePaste,
+                                                     &gateUndo, &gateRedo };
+    const auto buttonWidth = gateButtons.getWidth() / (int) buttons.size();
+    for (auto* button : buttons)
+        button->setBounds (gateButtons.removeFromLeft (buttonWidth).reduced (1, 0));
+    gateArea.removeFromTop (5);
+    gatePatternEditor.setBounds (gateArea);
+
+    const int rowH = (area.getHeight() - 10) / 2;
+    auto rowA = area.removeFromTop (rowH);
+    area.removeFromTop (10);
+    auto rowB = area;
 
     const int wA = rowA.getWidth();
     layoutKnobs (group (rowA, wA, "REVERB"), { kSize, kDecay, kDamp, kDiff, kEr, kSep, kWidth, kGap });

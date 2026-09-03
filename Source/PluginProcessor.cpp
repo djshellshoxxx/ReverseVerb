@@ -1,6 +1,10 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 // ---------------- Freeverb-style reverb with size / decay / damp / diffusion / separation / width / ER ----------------
 namespace
 {
@@ -104,7 +108,6 @@ namespace
         }
     };
 
-    const int kSyncBeats[] = { 1, 2, 4, 8, 4, 8, 16 };   // 1,2,4,8 beats / 1,2,4 bars
     const float kPitchOct[] = { 1.0f, 2.0f, 4.0f };
 
     bool stateContainsParameter (const juce::ValueTree& state, const juce::String& parameterId)
@@ -160,32 +163,129 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
                      juce::StringArray { "Rise", "Fall" }, 0));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::syncLen, 1 }, "Sync Length",
                      juce::StringArray { "1 beat", "2 beats", "4 beats", "8 beats", "1 bar", "2 bars", "4 bars" }, 2));
+    juce::StringArray v2Divisions;
+    for (const auto division : rv::allDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        v2Divisions.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::syncDivisionV2, 1 }, "Sync Division",
+                     v2Divisions, (int) rv::Division::oneBar));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::pitchRange, 1 }, "Pitch Range",
                      juce::StringArray { "1 oct", "2 oct", "4 oct" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::gateEnabled, 1 }, "Gator Enabled", false));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateSteps, 1 }, "Gator Steps",
+                     juce::StringArray { "16", "32" }, 0));
+    juce::StringArray gateRates;
+    for (const auto division : rv::gateRateDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        gateRates.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateRate, 1 }, "Gator Rate",
+                     gateRates, 7));
+    add (IDs::gateDepth, "Gator Depth", R { 0.0f, 1.0f, 0.001f }, 1.0f);
+    add (IDs::gateSmooth, "Gator Smooth", R { 0.0f, 100.0f, 0.1f, 0.5f }, 3.0f, "ms");
+    add (IDs::gateSwing, "Gator Swing", R { 0.0f, 0.75f, 0.001f }, 0.0f);
+    add (IDs::gatePhase, "Gator Phase", R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateRetrigger, 1 }, "Gator Retrigger",
+                     juce::StringArray { "Note", "Host" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateTarget, 1 }, "Gator Target",
+                     juce::StringArray { "Swell", "Hit", "Both" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateShape, 1 }, "Gator Shape",
+                     juce::StringArray { "Square", "Smooth", "Ramp Up", "Ramp Down", "Triangle", "Sine", "Curved" }, 0));
     return { p.begin(), p.end() };
 }
 
 ReverseVerbProcessor::ReverseVerbProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "PARAMS", createLayout())
+      apvts (*this, &undoManager, "PARAMS", createLayout())
 {
     formatManager.registerBasicFormats();
     for (auto* id : { &IDs::size, &IDs::decay, &IDs::damp, &IDs::diff, &IDs::er, &IDs::sep, &IDs::width, &IDs::gap,
                       &IDs::tail, &IDs::shape, &IDs::tone, &IDs::basscut, &IDs::align, &IDs::trimStart, &IDs::trimEnd,
-                      &IDs::sync, &IDs::syncLen, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
+                      &IDs::sync, &IDs::syncLen, &IDs::syncDivisionV2, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
                       &IDs::volStart, &IDs::volEnd, &IDs::volTension, &IDs::direction })
         apvts.addParameterListener (*id, this);
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
+    gateEnabledParam = apvts.getRawParameterValue (IDs::gateEnabled);
+    gateStepsParam = apvts.getRawParameterValue (IDs::gateSteps);
+    gateRateParam = apvts.getRawParameterValue (IDs::gateRate);
+    gateDepthParam = apvts.getRawParameterValue (IDs::gateDepth);
+    gateSmoothParam = apvts.getRawParameterValue (IDs::gateSmooth);
+    gateSwingParam = apvts.getRawParameterValue (IDs::gateSwing);
+    gatePhaseParam = apvts.getRawParameterValue (IDs::gatePhase);
+    gateRetriggerParam = apvts.getRawParameterValue (IDs::gateRetrigger);
+    gateTargetParam = apvts.getRawParameterValue (IDs::gateTarget);
+    gateShapeParam = apvts.getRawParameterValue (IDs::gateShape);
     rendered = std::make_shared<RenderedSample>();
+    const rv::GatePattern initialPattern;
+    publishGatePattern (initialPattern);
+    storeGatePatternInState (initialPattern, nullptr);
+    undoManager.clearUndoHistory();
     startTimer (60);
 }
 
 ReverseVerbProcessor::~ReverseVerbProcessor() { stopTimer(); }
 
+void ReverseVerbProcessor::parameterChanged (const juce::String& parameterId, float)
+{
+    if (parameterId == IDs::syncDivisionV2)
+        useV2SyncDivision = true;
+    dirty = true;
+}
+
 RenderDirection ReverseVerbProcessor::getDirection() const noexcept
 {
     return param (IDs::direction) >= 0.5f ? RenderDirection::fall : RenderDirection::rise;
+}
+
+rv::HostTiming ReverseVerbProcessor::getHostTiming() const noexcept
+{
+    auto timing = rv::sanitiseTiming (hostBpm.load(),
+                                      hostTimeSigNumerator.load(),
+                                      hostTimeSigDenominator.load(),
+                                      hostHasPpq.load() ? hostPpqPosition.load()
+                                                        : std::numeric_limits<double>::quiet_NaN());
+    const auto sampleRate = hostSampleRate.load();
+    timing.sampleRate = std::isfinite (sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
+    timing.isPlaying = hostIsPlaying.load();
+    timing.isLooping = hostIsLooping.load();
+    timing.hasLoopRange = hostHasLoopRange.load();
+    timing.loopStartPpq = hostLoopStartPpq.load();
+    timing.loopEndPpq = hostLoopEndPpq.load();
+    return timing;
+}
+
+rv::Division ReverseVerbProcessor::getSyncDivision() const noexcept
+{
+    if (! useV2SyncDivision.load())
+        return rv::legacyDivision ((int) param (IDs::syncLen));
+
+    const auto choice = juce::jlimit (0, (int) rv::Division::count - 1,
+                                      (int) param (IDs::syncDivisionV2));
+    return static_cast<rv::Division> (choice);
+}
+
+rv::GateSettings ReverseVerbProcessor::getGateSettings() const noexcept
+{
+    rv::GateSettings settings;
+    const auto rateIndex = juce::jlimit (0, (int) rv::gateRateDivisions.size() - 1,
+                                         (int) gateRateParam->load());
+    settings.rate = rv::gateRateDivisions[(size_t) rateIndex];
+    settings.activeSteps = gateStepsParam->load() < 0.5f ? 16 : 32;
+    settings.depth = gateDepthParam->load();
+    settings.smoothingMilliseconds = gateSmoothParam->load();
+    settings.swing = gateSwingParam->load();
+    settings.phase = gatePhaseParam->load();
+    settings.retrigger = gateRetriggerParam->load() < 0.5f ? rv::GateRetrigger::note
+                                                            : rv::GateRetrigger::host;
+    const auto target = juce::jlimit (0, 2, (int) gateTargetParam->load());
+    settings.target = static_cast<rv::GateTarget> (target);
+    const auto shape = juce::jlimit (0, 6, (int) gateShapeParam->load());
+    settings.shape = static_cast<rv::GateShape> (shape);
+    return settings;
 }
 
 void ReverseVerbProcessor::setParam (const juce::String& id, float value)
@@ -219,9 +319,122 @@ void ReverseVerbProcessor::randomizeReverb()
     setParam (IDs::basscut, 20.0f + std::pow (rng.nextFloat(), 2.0f) * 800.0f);
 }
 
+std::shared_ptr<const rv::GatePattern> ReverseVerbProcessor::getGatePattern() const
+{
+    return std::atomic_load_explicit (&gatePattern, std::memory_order_acquire);
+}
+
+void ReverseVerbProcessor::publishGatePattern (const rv::GatePattern& pattern)
+{
+    std::shared_ptr<const rv::GatePattern> immutable =
+        std::make_shared<const rv::GatePattern> (rv::sanitiseGatePattern (pattern));
+    std::atomic_store_explicit (&gatePattern, std::move (immutable), std::memory_order_release);
+}
+
+void ReverseVerbProcessor::storeGatePatternInState (const rv::GatePattern& pattern,
+                                                     juce::UndoManager* undo)
+{
+    const auto existing = apvts.state.getChildWithName (rv::gatePatternStateType);
+    if (existing.isValid())
+        apvts.state.removeChild (existing, undo);
+    apvts.state.addChild (rv::gatePatternToValueTree (pattern), -1, undo);
+}
+
+void ReverseVerbProcessor::replaceGatePattern (const rv::GatePattern& pattern,
+                                               const juce::String& transactionName)
+{
+    const auto clean = rv::sanitiseGatePattern (pattern);
+    undoManager.beginNewTransaction (transactionName);
+    storeGatePatternInState (clean, &undoManager);
+    publishGatePattern (clean);
+}
+
+void ReverseVerbProcessor::setGateStep (int step, float value,
+                                        const juce::String& transactionName)
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    if (step < 0 || step >= (int) edited.steps.size())
+        return;
+    edited.activeSteps = getGateSettings().activeSteps;
+    edited.steps[(size_t) step] = value;
+    replaceGatePattern (edited, transactionName);
+}
+
+void ReverseVerbProcessor::clearGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    edited.steps.fill (0.0f);
+    replaceGatePattern (edited, "Clear gate pattern");
+}
+
+void ReverseVerbProcessor::fillGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    edited.steps.fill (1.0f);
+    replaceGatePattern (edited, "Fill gate pattern");
+}
+
+void ReverseVerbProcessor::invertGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    for (auto& step : edited.steps)
+        step = 1.0f - step;
+    replaceGatePattern (edited, "Invert gate pattern");
+}
+
+void ReverseVerbProcessor::randomizeGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    auto value = edited.seed != 0 ? edited.seed : 0x52564732u;
+    for (auto& step : edited.steps)
+    {
+        value ^= value << 13;
+        value ^= value >> 17;
+        value ^= value << 5;
+        step = (float) (value & 0x00ffffffu) / (float) 0x00ffffffu;
+    }
+    edited.seed = value;
+    replaceGatePattern (edited, "Randomize gate pattern");
+}
+
+void ReverseVerbProcessor::rotateGatePattern (int amount)
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    const auto active = getGateSettings().activeSteps;
+    edited.activeSteps = active;
+    const auto rotation = active > 0 ? amount % active : 0;
+    if (rotation == 0)
+        return;
+    if (rotation > 0)
+        std::rotate (edited.steps.begin(), edited.steps.begin() + active - rotation,
+                     edited.steps.begin() + active);
+    else
+        std::rotate (edited.steps.begin(), edited.steps.begin() - rotation,
+                     edited.steps.begin() + active);
+    replaceGatePattern (edited, rotation > 0 ? "Rotate gate right" : "Rotate gate left");
+}
+
+void ReverseVerbProcessor::refreshGatePatternFromState()
+{
+    const auto current = getGatePattern();
+    const auto fallback = current != nullptr ? *current : rv::GatePattern {};
+    publishGatePattern (rv::gatePatternFromValueTree (
+        apvts.state.getChildWithName (rv::gatePatternStateType), fallback));
+}
+
 void ReverseVerbProcessor::prepareToPlay (double sampleRate, int)
 {
-    if (std::abs (sampleRate - hostSampleRate) > 0.5) dirty = true;
+    if (std::abs (sampleRate - hostSampleRate.load()) > 0.5) dirty = true;
     hostSampleRate = sampleRate;
     for (auto& v : voices) v.active = false;
     playhead = -1;
@@ -240,17 +453,28 @@ void ReverseVerbProcessor::startVoice (float gain)
     Voice* target = nullptr;
     for (auto& v : voices) if (! v.active) { target = &v; break; }
     if (target == nullptr) { target = &voices[0]; for (auto& v : voices) if (v.id < target->id) target = &v; }
-    target->active = true; target->pos = 0; target->gain = gain; target->id = ++voiceCounter;
+    target->active = true;
+    target->pos = 0;
+    target->gain = gain;
+    target->id = ++voiceCounter;
+    target->gate.reset();
 }
 
-void ReverseVerbProcessor::renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet)
+void ReverseVerbProcessor::renderRange (juce::AudioBuffer<float>& out, const RenderedSample& renderedSample,
+                                        int start, int num, float dry, float wet,
+                                        const rv::GatePattern& pattern,
+                                        const rv::GateSettings& settings,
+                                        const rv::HostTiming& timing,
+                                        bool gateEnabled)
 {
     if (num <= 0) return;
-    const int total = r.getNumSamples();
+    const int total = renderedSample.getNumSamples();
     for (auto& v : voices)
     {
         if (! v.active) continue;
-        mixRenderedRange (out, r, v.pos, start, num, wet * v.gain, dry * v.gain);
+        rv::mixGatedRenderedRange (out, renderedSample, v.pos, start, num,
+                                   wet * v.gain, dry * v.gain, v.gate,
+                                   pattern, settings, timing, v.pos, start, gateEnabled);
         v.pos += num;
         if (v.pos >= total) v.active = false;
     }
@@ -261,10 +485,43 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
-    if (auto* ph = getPlayHead())
-        if (auto pos = ph->getPosition())
-            if (auto bpm = pos->getBpm())
-                if (*bpm > 20.0) hostBpm = *bpm;
+    double bpm = rv::defaultBpm;
+    int numerator = 4, denominator = 4;
+    double ppq = std::numeric_limits<double>::quiet_NaN();
+    bool isPlaying = false, isLooping = false, validLoop = false;
+    double loopStart = 0.0, loopEnd = 0.0;
+
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+        {
+            if (const auto value = position->getBpm()) bpm = *value;
+            if (const auto signature = position->getTimeSignature())
+            {
+                numerator = signature->numerator;
+                denominator = signature->denominator;
+            }
+            if (const auto value = position->getPpqPosition()) ppq = *value;
+            isPlaying = position->getIsPlaying();
+            isLooping = position->getIsLooping();
+            if (const auto loop = position->getLoopPoints())
+            {
+                validLoop = std::isfinite (loop->ppqStart) && std::isfinite (loop->ppqEnd)
+                         && loop->ppqEnd > loop->ppqStart;
+                if (validLoop) { loopStart = loop->ppqStart; loopEnd = loop->ppqEnd; }
+            }
+        }
+
+    const auto timing = rv::sanitiseTiming (bpm, numerator, denominator, ppq);
+    hostBpm = timing.bpm;
+    hostTimeSigNumerator = timing.timeSignature.numerator;
+    hostTimeSigDenominator = timing.timeSignature.denominator;
+    hostPpqPosition = timing.ppqPosition;
+    hostHasPpq = timing.hasPpqPosition;
+    hostIsPlaying = isPlaying;
+    hostIsLooping = isLooping;
+    hostLoopStartPpq = loopStart;
+    hostLoopEndPpq = loopEnd;
+    hostHasLoopRange = validLoop;
 
     const auto r = std::atomic_load_explicit (&rendered, std::memory_order_acquire);
     if (r == nullptr || r->getNumSamples() == 0) { playhead = -1; return; }
@@ -273,17 +530,25 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (triggerRequest.exchange (0) != 0) startVoice (1.0f);
 
     const float dry = dryParam->load(), wet = wetParam->load();
+    const auto patternSnapshot = getGatePattern();
+    const rv::GatePattern fallbackPattern;
+    const auto& pattern = patternSnapshot != nullptr ? *patternSnapshot : fallbackPattern;
+    const auto gateSettings = getGateSettings();
+    const auto timingSnapshot = getHostTiming();
+    const bool gateEnabled = gateEnabledParam->load() >= 0.5f;
     const int numSamples = buffer.getNumSamples();
     int pos = 0;
     for (const auto meta : midi)
     {
         const auto msg = meta.getMessage();
         const int at = juce::jlimit (0, numSamples, meta.samplePosition);
-        renderRange (buffer, *r, pos, at - pos, dry, wet);
+        renderRange (buffer, *r, pos, at - pos, dry, wet,
+                     pattern, gateSettings, timingSnapshot, gateEnabled);
         pos = at;
         if (msg.isNoteOn()) startVoice (msg.getFloatVelocity());
     }
-    renderRange (buffer, *r, pos, numSamples - pos, dry, wet);
+    renderRange (buffer, *r, pos, numSamples - pos, dry, wet,
+                 pattern, gateSettings, timingSnapshot, gateEnabled);
 
     const Voice* newest = nullptr;
     for (auto& v : voices) if (v.active && (newest == nullptr || v.id > newest->id)) newest = &v;
@@ -297,7 +562,12 @@ std::shared_ptr<const RenderedSample> ReverseVerbProcessor::getRendered() const
 
 void ReverseVerbProcessor::timerCallback()
 {
-    if (param (IDs::sync) > 0.5f && std::abs (hostBpm.load() - lastRenderBpm) > 0.01) dirty = true;
+    const auto timing = getHostTiming();
+    if (param (IDs::sync) > 0.5f
+        && (std::abs (timing.bpm - lastRenderBpm) > 0.01
+            || timing.timeSignature.numerator != lastRenderTimeSignature.numerator
+            || timing.timeSignature.denominator != lastRenderTimeSignature.denominator))
+        dirty = true;
     if (dirty.exchange (false)) render();
     if (previewAfterRender.exchange (false)) triggerPreview();
 }
@@ -310,12 +580,17 @@ void ReverseVerbProcessor::render()
     { const juce::ScopedLock sl (sourceLock); src.makeCopyOf (sourceBuffer); srcSR = sourceSR; }
 
     auto out = std::make_shared<RenderedSample>();
-    const double sr = hostSampleRate;
-    const double bpm = hostBpm.load();
+    const auto hostTiming = getHostTiming();
+    const double sr = hostTiming.sampleRate;
+    const double bpm = hostTiming.bpm;
     const auto direction = getDirection();
     lastRenderBpm = bpm;
+    lastRenderTimeSignature = hostTiming.timeSignature;
     out->sampleRate = sr;
+    out->bpm = bpm;
     out->direction = direction;
+    out->timeSignatureNumerator = hostTiming.timeSignature.numerator;
+    out->timeSignatureDenominator = hostTiming.timeSignature.denominator;
 
     if (src.getNumSamples() > 0 && srcSR > 0)
     {
@@ -337,16 +612,17 @@ void ReverseVerbProcessor::render()
 
         // 2. tail length (free or synced to BPM)
         const int gapLen = (int) (param (IDs::gap) * 0.001f * sr);
-        double tailSec = param (IDs::tail);
         const bool sync = param (IDs::sync) > 0.5f;
-        int beats = 0;
+        int tailLen = juce::jmax (1, (int) std::llround (param (IDs::tail) * sr));
         if (sync)
         {
-            const int choice = juce::jlimit (0, 6, (int) param (IDs::syncLen));
-            beats = kSyncBeats[choice];
-            tailSec = juce::jmax (0.05, beats * 60.0 / bpm - hitLen / sr - gapLen / sr);
+            const auto division = getSyncDivision();
+            const auto targetLength = rv::durationSamples (division, bpm, sr, hostTiming.timeSignature);
+            const auto minimumTail = (std::int64_t) std::llround (0.05 * sr);
+            tailLen = wetTailSamplesForTimeline (direction, targetLength, hitLen, gapLen, minimumTail);
+            out->musicalQuarterNotes = rv::quarterNotes (division, hostTiming.timeSignature);
+            out->gridQuarterNotes = juce::jmin (1.0, out->musicalQuarterNotes);
         }
-        const int tailLen = (int) (tailSec * sr);
         const int revLen  = hitLen + tailLen;
 
         // 3. reverb
@@ -408,7 +684,8 @@ void ReverseVerbProcessor::render()
             fullDry.copyFrom (ch, timeline.dryStart, hit, ch, 0, hitLen);
         }
         out->fullLengthSec = fullLen / sr;
-        out->beats = beats;
+        out->beats = (int) std::ceil (out->musicalQuarterNotes);
+        out->beatsPerBar = hostTiming.timeSignature.numerator;
 
         // 8. trim
         int tStart = (int) (param (IDs::trimStart) * fullLen);
@@ -590,7 +867,18 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
     const int n = r->getNumSamples();
     juce::AudioBuffer<float> mix (2, n);
     mix.clear();
-    mixRenderedRange (mix, *r, 0, 0, n, wetParam->load(), dryParam->load());
+    const auto patternSnapshot = getGatePattern();
+    const rv::GatePattern fallbackPattern;
+    const auto& pattern = patternSnapshot != nullptr ? *patternSnapshot : fallbackPattern;
+    auto gateSettings = getGateSettings();
+    gateSettings.retrigger = rv::GateRetrigger::note;
+    auto timing = getHostTiming();
+    timing.hasPpqPosition = false;
+    rv::GateEngine exportGate;
+    exportGate.reset();
+    rv::mixGatedRenderedRange (mix, *r, 0, 0, n, wetParam->load(), dryParam->load(),
+                               exportGate, pattern, gateSettings, timing, 0, 0,
+                               gateEnabledParam->load() >= 0.5f);
     dest.deleteFile();
     std::unique_ptr<juce::FileOutputStream> os (dest.createOutputStream());
     if (os == nullptr || ! os->openedOk()) return false;
@@ -608,7 +896,17 @@ void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("schemaVersion", 2, nullptr);
+    state.setProperty ("useV2SyncDivision", useV2SyncDivision.load(), nullptr);
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
+    const auto existingPattern = state.getChildWithName (rv::gatePatternStateType);
+    if (existingPattern.isValid())
+        state.removeChild (existingPattern, nullptr);
+    if (const auto pattern = getGatePattern())
+    {
+        auto savedPattern = *pattern;
+        savedPattern.activeSteps = getGateSettings().activeSteps;
+        state.addChild (rv::gatePatternToValueTree (savedPattern), -1, nullptr);
+    }
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -619,12 +917,27 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.isValid()) return;
         const bool hasDirection = stateContainsParameter (state, IDs::direction);
+        const bool restoreV2Sync = (bool) state.getProperty ("useV2SyncDivision", false)
+                                && stateContainsParameter (state, IDs::syncDivisionV2);
+        const auto restoredPattern = rv::gatePatternFromValueTree (
+            state.getChildWithName (rv::gatePatternStateType));
         apvts.replaceState (state);
+        publishGatePattern (restoredPattern);
+        if (! apvts.state.getChildWithName (rv::gatePatternStateType).isValid())
+            storeGatePatternInState (restoredPattern, nullptr);
         if (! hasDirection)
             if (auto* direction = apvts.getParameter (IDs::direction))
                 direction->setValueNotifyingHost (direction->convertTo0to1 (0.0f));
+        if (! restoreV2Sync)
+            if (auto* division = apvts.getParameter (IDs::syncDivisionV2))
+            {
+                const auto mapped = (float) static_cast<int> (rv::legacyDivision ((int) param (IDs::syncLen)));
+                division->setValueNotifyingHost (division->convertTo0to1 (mapped));
+            }
+        useV2SyncDivision = restoreV2Sync;
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
+        undoManager.clearUndoHistory();
         dirty = true;
     }
 }

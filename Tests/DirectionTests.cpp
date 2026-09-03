@@ -73,6 +73,15 @@ public:
         rendered.direction = RenderDirection::fall;
         expectEquals (latencySamplesFor (rendered, false), 0);
         expectEquals (latencySamplesFor (rendered, true), 0);
+
+        beginTest ("Synced wet tails solve the requested direction timeline");
+        const auto riseTail = wetTailSamplesForTimeline (RenderDirection::rise, 1000, 100, 50, 10);
+        expectEquals (riseTail, 750);
+        expectEquals (calculateLayerTimeline (RenderDirection::rise, 100 + riseTail, 100, 50).totalLength, 1000);
+        const auto fallTail = wetTailSamplesForTimeline (RenderDirection::fall, 1000, 100, 50, 10);
+        expectEquals (fallTail, 850);
+        expectEquals (calculateLayerTimeline (RenderDirection::fall, 100 + fallTail, 100, 50).totalLength, 1000);
+        expectEquals (wetTailSamplesForTimeline (RenderDirection::rise, 100, 100, 50, 20), 20);
     }
 
 private:

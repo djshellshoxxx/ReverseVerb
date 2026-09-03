@@ -111,6 +111,21 @@ std::string_view divisionLabel (Division division) noexcept
     return "1/4";
 }
 
+Division legacyDivision (int legacyChoice) noexcept
+{
+    switch (legacyChoice)
+    {
+        case 0:  return Division::quarter;
+        case 1:  return Division::half;
+        case 2:  return Division::whole;
+        case 3:  return Division::doubleWhole;
+        case 4:  return Division::oneBar;
+        case 5:  return Division::twoBars;
+        case 6:  return Division::fourBars;
+        default: return Division::whole;
+    }
+}
+
 double quarterNotes (Division division, TimeSignature timeSignature) noexcept
 {
     if (const auto bars = barCount (division); bars > 0)

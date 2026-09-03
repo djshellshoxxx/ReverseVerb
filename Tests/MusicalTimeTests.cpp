@@ -18,6 +18,7 @@ public:
         testBarTimeSignatures();
         testSampleRates();
         testTimingSanitisation();
+        testLegacySyncMapping();
     }
 
 private:
@@ -123,6 +124,15 @@ private:
         expectNear (clampedHigh.bpm, rv::maximumBpm);
         expect (clampedHigh.hasPpqPosition);
         expectNear (clampedHigh.ppqPosition, -3.25);
+    }
+
+    void testLegacySyncMapping()
+    {
+        beginTest ("All Version 1 sync choices preserve their 4/4 duration");
+        constexpr std::array expectedQuarterNotes { 1.0, 2.0, 4.0, 8.0, 4.0, 8.0, 16.0 };
+        for (int choice = 0; choice < (int) expectedQuarterNotes.size(); ++choice)
+            expectNear (rv::quarterNotes (rv::legacyDivision (choice), { 4, 4 }),
+                        expectedQuarterNotes[(size_t) choice]);
     }
 };
 

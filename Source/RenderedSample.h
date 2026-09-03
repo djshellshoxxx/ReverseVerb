@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <cstdint>
 #include <vector>
 
 enum class RenderDirection
@@ -21,6 +22,11 @@ struct LayerTimeline
                                                      int wetLength,
                                                      int dryLength,
                                                      int delaySamples) noexcept;
+[[nodiscard]] int wetTailSamplesForTimeline (RenderDirection direction,
+                                              std::int64_t targetLength,
+                                              int dryLength,
+                                              int delaySamples,
+                                              std::int64_t minimumTailLength) noexcept;
 
 struct RenderedSample
 {
@@ -37,8 +43,13 @@ struct RenderedSample
     int wetEnd = -1;
     RenderDirection direction = RenderDirection::rise;
     double sampleRate = 44100.0;
+    double bpm = 120.0;
     int beats = 0;
     int beatsPerBar = 4;
+    double musicalQuarterNotes = 0.0;
+    double gridQuarterNotes = 1.0;
+    int timeSignatureNumerator = 4;
+    int timeSignatureDenominator = 4;
     double fullLengthSec = 0.0;
     double trimStartSec = 0.0;
     double trimEndSec = 0.0;

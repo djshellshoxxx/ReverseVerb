@@ -30,6 +30,11 @@ juce_generate_juce_header(ReverseVerb)
 target_sources(ReverseVerb PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/GateEngine.cpp
+    Source/GatedMixer.cpp
+    Source/GatePatternClipboard.cpp
+    Source/GatePatternState.cpp
+    Source/MusicalTime.cpp
     Source/RenderedSample.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
@@ -52,6 +57,13 @@ if(BUILD_TESTING)
         Tests/TestMain.cpp
         Tests/MusicalTimeTests.cpp
         Tests/DirectionTests.cpp
+        Tests/GateEngineTests.cpp
+        Tests/GateIntegrationTests.cpp
+        Tests/GatePatternClipboardTests.cpp
+        Source/GateEngine.cpp
+        Source/GatedMixer.cpp
+        Source/GatePatternClipboard.cpp
+        Source/GatePatternState.cpp
         Source/RenderedSample.cpp
         Source/MusicalTime.cpp)
 
@@ -63,6 +75,7 @@ if(BUILD_TESTING)
     target_link_libraries(ReverseVerbTests PRIVATE
         juce::juce_audio_basics
         juce::juce_core
+        juce::juce_data_structures
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 

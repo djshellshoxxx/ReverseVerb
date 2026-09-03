@@ -59,6 +59,22 @@ LayerTimeline calculateLayerTimeline (RenderDirection direction,
     return result;
 }
 
+int wetTailSamplesForTimeline (RenderDirection direction,
+                               std::int64_t targetLength,
+                               int dryLength,
+                               int delaySamples,
+                               std::int64_t minimumTailLength) noexcept
+{
+    const auto dry = static_cast<std::int64_t> (std::max (0, dryLength));
+    const auto delay = static_cast<std::int64_t> (std::max (0, delaySamples));
+    const auto fixedLength = direction == RenderDirection::rise ? dry * 2 + delay
+                                                                 : dry + delay;
+    const auto requested = std::max<std::int64_t> ({ 1, minimumTailLength,
+                                                     std::max<std::int64_t> (0, targetLength) - fixedLength });
+    return static_cast<int> (std::min<std::int64_t> (requested,
+                                                     std::numeric_limits<int>::max() - dry));
+}
+
 int latencySamplesFor (const RenderedSample& rendered, bool alignDryHit) noexcept
 {
     if (! alignDryHit || rendered.direction != RenderDirection::rise)

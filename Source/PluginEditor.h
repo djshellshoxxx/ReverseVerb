@@ -134,6 +134,42 @@ private:
     juce::AudioProcessorParameter* parameter = nullptr;
 };
 
+class HostContextToggleButton : public juce::ToggleButton
+{
+public:
+    using juce::ToggleButton::ToggleButton;
+    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&);
+    void mouseDown (const juce::MouseEvent&) override;
+
+private:
+    juce::AudioProcessorEditor* editor = nullptr;
+    juce::AudioProcessorParameter* parameter = nullptr;
+};
+
+class GatePatternEditor : public juce::Component, private juce::Timer
+{
+public:
+    explicit GatePatternEditor (ReverseVerbProcessor&);
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+
+private:
+    void timerCallback() override;
+    int stepAt (float x) const noexcept;
+    float valueAt (float y) const noexcept;
+    void drawLine (int fromStep, float fromValue, int toStep, float toValue);
+
+    ReverseVerbProcessor& proc;
+    std::shared_ptr<const rv::GatePattern> cached;
+    rv::GatePattern working;
+    int activeSteps = 16;
+    int firstStep = 0, lastStep = 0;
+    float firstValue = 0.0f;
+    bool dragging = false;
+};
+
 class ReverseVerbEditor : public juce::AudioProcessorEditor,
                           public juce::DragAndDropContainer,
                           public juce::FileDragAndDropTarget,
@@ -166,19 +202,28 @@ private:
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
     juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
+    HostContextToggleButton gateToggle { "GATOR" };
     juce::ComboBox syncCombo, rangeCombo;
-    HostContextComboBox directionCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt;
+    HostContextComboBox directionCombo, gateStepsCombo, gateRateCombo, gateRetriggerCombo, gateTargetCombo, gateShapeCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt,
+                                                                            gateStepsAtt, gateRateAtt, gateRetriggerAtt,
+                                                                            gateTargetAtt, gateShapeAtt;
+    juce::TextButton gateClear { "CLEAR" }, gateFill { "FILL" }, gateInvert { "INVERT" }, gateRandom { "RANDOM" },
+                     gateLeft { "<" }, gateRight { ">" }, gateCopy { "COPY" }, gatePaste { "PASTE" },
+                     gateUndo { "UNDO" }, gateRedo { "REDO" };
 
     WaveformDisplay waveform;
     DiffusionShape shape;
     DragOutPad dragPad;
     TensionBox pitchTension;
+    GatePatternEditor gatePatternEditor;
     HelpOverlay help;
 
     std::vector<std::unique_ptr<Knob>> knobs;
-    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass, *kDry, *kWet, *kPitch, *kVolStart, *kVolEnd, *kVolTension;
+    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass,
+         *kDry, *kWet, *kPitch, *kVolStart, *kVolEnd, *kVolTension,
+         *kGateDepth, *kGateSmooth, *kGateSwing, *kGatePhase;
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;
 
