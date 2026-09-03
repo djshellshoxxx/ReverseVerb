@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - "v2*"
+      - "feature/v2-*"
+      - "codex/v2-*"
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reverseverb-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            plugin_targets: ReverseVerb_VST3 ReverseVerb_Standalone
+          - name: Windows
+            os: windows-latest
+            plugin_targets: ReverseVerb_VST3 ReverseVerb_Standalone
+          - name: macOS
+            os: macos-latest
+            plugin_targets: ReverseVerb_VST3 ReverseVerb_AU ReverseVerb_Standalone
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev ladspa-sdk \
+            libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev \
+            libglu1-mesa-dev mesa-common-dev
+
+      - name: Configure Debug
+        shell: bash
+        run: cmake --preset debug
+
+      - name: Build and test Debug
+        shell: bash
+        run: |
+          cmake --build --preset build-debug --target ReverseVerbTests ${{ matrix.plugin_targets }}
+          ctest --preset test-debug
+
+      - name: Configure Release
+        shell: bash
+        run: cmake --preset release
+
+      - name: Build and test Release
+        shell: bash
+        run: |
+          cmake --build --preset build-release --target ReverseVerbTests ${{ matrix.plugin_targets }}
+          ctest --preset test-release
+
+      - name: Upload Release artifacts and test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ReverseVerb-${{ matrix.name }}-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            build/release/ReverseVerb_artefacts/Release/**
+            build/debug/Testing/Temporary/**
+            build/release/Testing/Temporary/**
