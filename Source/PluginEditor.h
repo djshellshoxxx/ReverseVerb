@@ -109,6 +109,20 @@ private:
     juce::TextButton closeButton { "CLOSE" };
 };
 
+// Gives every exported parameter knob access to the host's own context menu.
+// In hosts that implement the VST3 parameter context-menu extension this can
+// expose commands such as "Create automation clip" without hard-coding a DAW.
+class HostContextSlider : public juce::Slider
+{
+public:
+    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&);
+    void mouseDown (const juce::MouseEvent&) override;
+
+private:
+    juce::AudioProcessorEditor* editor = nullptr;
+    juce::AudioProcessorParameter* parameter = nullptr;
+};
+
 class ReverseVerbEditor : public juce::AudioProcessorEditor,
                           public juce::DragAndDropContainer,
                           public juce::FileDragAndDropTarget,
@@ -125,7 +139,7 @@ public:
 private:
     struct Knob
     {
-        juce::Slider slider; juce::Label label;
+        HostContextSlider slider; juce::Label label;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
     };
     struct Group { juce::String name; juce::Rectangle<int> bounds; };

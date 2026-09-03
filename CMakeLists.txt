@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
-project(ReverseVerb VERSION 1.0.0)
+project(ReverseVerb VERSION 2.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+include(CTest)
 
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -37,3 +40,25 @@ target_compile_definitions(ReverseVerb PUBLIC
 target_link_libraries(ReverseVerb
     PRIVATE juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+
+if(BUILD_TESTING)
+    juce_add_console_app(ReverseVerbTests
+        PRODUCT_NAME "ReverseVerb Tests")
+
+    juce_generate_juce_header(ReverseVerbTests)
+
+    target_sources(ReverseVerbTests PRIVATE
+        Tests/TestMain.cpp)
+
+    target_compile_definitions(ReverseVerbTests PRIVATE
+        JUCE_UNIT_TESTS=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+
+    target_link_libraries(ReverseVerbTests PRIVATE
+        juce::juce_core
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+    add_test(NAME ReverseVerbTests COMMAND ReverseVerbTests)
+endif()
