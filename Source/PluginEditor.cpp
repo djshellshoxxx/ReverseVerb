@@ -250,12 +250,12 @@ void WaveformDisplay::rebuild()
     swellPath.clear(); hitPath.clear();
     total = 0; hitIndex = -1;
     if (cached == nullptr) return;
-    total = cached->audio.getNumSamples();
-    hitIndex = cached->hitIndex;
+    total = cached->displayAudio.getNumSamples();
+    hitIndex = cached->dryHitIndex;
     auto p = plot();
     if (total <= 0 || p.getWidth() <= 2.0f) return;
 
-    auto build = [&] (juce::Path& path, int from, int to)
+    auto build = [&] (juce::Path& path, const juce::AudioBuffer<float>& audio, int from, int to)
     {
         if (to <= from) return;
         const float x0 = p.getX() + p.getWidth() * (float) from / (float) total;
@@ -263,7 +263,8 @@ void WaveformDisplay::rebuild()
         const int cols = juce::jmax (1, (int) (x1 - x0));
         const float mid = p.getCentreY();
         std::vector<float> mins ((size_t) cols, 0.0f), maxs ((size_t) cols, 0.0f);
-        const float* d = cached->audio.getReadPointer (0);
+        if (audio.getNumChannels() <= 0 || audio.getNumSamples() < total) return;
+        const float* d = audio.getReadPointer (0);
         for (int c = 0; c < cols; ++c)
         {
             const int a = from + (int) ((juce::int64) (to - from) * c / cols);
@@ -278,9 +279,10 @@ void WaveformDisplay::rebuild()
         for (int c = cols - 1; c >= 0; --c) path.lineTo (x0 + (float) c, mid - mins[(size_t) c] * amp);
         path.closeSubPath();
     };
-    const int split = hitIndex >= 0 ? hitIndex : total;
-    build (swellPath, 0, split);
-    build (hitPath, split, total);
+    build (swellPath, cached->wetAudio,
+           juce::jmax (0, cached->wetStart), juce::jmin (total, cached->wetEnd));
+    build (hitPath, cached->dryAudio,
+           juce::jmax (0, cached->dryStart), juce::jmin (total, cached->dryEnd));
 }
 
 void WaveformDisplay::paint (juce::Graphics& g)
@@ -578,7 +580,8 @@ WORKFLOW
   Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.
   Right-click a knob for host automation commands (when the DAW provides them) and Reset to default.
   EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
-  Hit on note (PDC): reports the swell length as latency so the DRY HIT lands exactly on the note and the swell starts early. Turn off if you'd rather place notes early yourself.
+  RISE puts reversed reverb before the hit. FALL puts the dry hit first and plays the forward reverb decay after the selected DELAY.
+  Hit on note (PDC): in RISE, reports the dry-hit offset as latency so the hit lands exactly on the note. FALL needs no lookahead, so PDC is disabled.
   RESET EDITS clears trim, pitch and volume envelope. RANDOM rolls new reverb settings.
 
 WAVEFORM
@@ -592,7 +595,7 @@ REVERB
   SIZE: room dimensions.  DECAY: how long the tail rings.  DAMP: high-frequency absorption.
   DIFFUSION: smearing of echoes (smooth vs grainy). The SPACE panel shows more faces as diffusion rises.
   EARLY REF: level of first reflections.  SEPARATION: how different left and right are.  WIDTH: stereo spread of the mix.
-  DELAY: silence inserted between the end of the swell and the hit.
+  DELAY: in RISE, silence between the wet rise and hit; in FALL, time from the hit to the wet fall.
 
 SWELL
   LENGTH: seconds of reverb tail (disabled when SYNC is on).  SHAPE: bends the swell envelope (negative = fuller early, positive = late rush).
@@ -605,7 +608,7 @@ PITCH
   PITCH sweeps the pitch from 0 at the start to the knob amount at the end. Range chooses 1, 2 or 4 octaves. CURVE box: drag up/down to change how fast the sweep happens.
 
 MIX
-  HIT: level of the dry hit.  SWELL: level of the reversed reverb.
+  HIT: level of the dry hit.  SWELL: level of the wet rise or fall.
 )";
 
 HelpOverlay::HelpOverlay()
@@ -641,6 +644,36 @@ void HelpOverlay::resized()
 
 // ---------------- Host parameter context menu ----------------
 
+namespace
+{
+void showHostParameterMenu (juce::Component& target,
+                            juce::AudioProcessorEditor* editor,
+                            juce::AudioProcessorParameter* parameter)
+{
+    juce::PopupMenu menu;
+
+    if (editor != nullptr && parameter != nullptr)
+        if (auto* hostContext = editor->getHostContext())
+            if (auto hostMenu = hostContext->getContextMenuForParameter (parameter))
+                menu = hostMenu->getEquivalentPopupMenu();
+
+    if (menu.getNumItems() > 0)
+        menu.addSeparator();
+
+    menu.addItem ("Reset to default", parameter != nullptr, false,
+                  [safeTarget = juce::Component::SafePointer<juce::Component> (&target), parameter]
+                  {
+                      if (safeTarget == nullptr || parameter == nullptr)
+                          return;
+
+                      parameter->beginChangeGesture();
+                      parameter->setValueNotifyingHost (parameter->getDefaultValue());
+                      parameter->endChangeGesture();
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target).withMousePosition());
+}
+}
+
 void HostContextSlider::setHostParameter (juce::AudioProcessorEditor& owner,
                                           juce::AudioProcessorParameter& hostParameter)
 {
@@ -656,30 +689,25 @@ void HostContextSlider::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    juce::PopupMenu menu;
+    showHostParameterMenu (*this, editor, parameter);
+}
 
-    if (editor != nullptr && parameter != nullptr)
-        if (auto* hostContext = editor->getHostContext())
-            if (auto hostMenu = hostContext->getContextMenuForParameter (parameter))
-                menu = hostMenu->getEquivalentPopupMenu();
+void HostContextComboBox::setHostParameter (juce::AudioProcessorEditor& owner,
+                                            juce::AudioProcessorParameter& hostParameter)
+{
+    editor = &owner;
+    parameter = &hostParameter;
+}
 
-    // Standalone builds and hosts without the optional VST3 context-menu
-    // extension still get a useful, host-independent command. In compatible
-    // hosts it is appended to commands such as automation-lane creation.
-    if (menu.getNumItems() > 0)
-        menu.addSeparator();
+void HostContextComboBox::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu())
+    {
+        juce::ComboBox::mouseDown (e);
+        return;
+    }
 
-    menu.addItem ("Reset to default", parameter != nullptr, false,
-                  [safeThis = juce::Component::SafePointer<HostContextSlider> (this)]
-                  {
-                      if (safeThis == nullptr || safeThis->parameter == nullptr)
-                          return;
-
-                      safeThis->parameter->beginChangeGesture();
-                      safeThis->parameter->setValueNotifyingHost (safeThis->parameter->getDefaultValue());
-                      safeThis->parameter->endChangeGesture();
-                  });
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+    showHostParameterMenu (*this, editor, parameter);
 }
 
 // ---------------- Editor ----------------
@@ -692,7 +720,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     title.setText ("REVERSE VERB", juce::dontSendNotification);
     title.setFont (juce::Font (juce::FontOptions (24.0f, juce::Font::bold)));
     addAndMakeVisible (title);
-    subtitle.setText ("reverse reverb swell for hits", juce::dontSendNotification);
+    subtitle.setText ("tempo-shaped reverb rises and falls for hits", juce::dontSendNotification);
     subtitle.setFont (juce::Font (juce::FontOptions (12.0f)));
     subtitle.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (subtitle);
@@ -717,12 +745,20 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
 
     syncCombo.addItemList ({ "1 beat", "2 beats", "4 beats", "8 beats", "1 bar", "2 bars", "4 bars" }, 1);
     rangeCombo.addItemList ({ "1 oct", "2 oct", "4 oct" }, 1);
+    directionCombo.addItemList ({ "RISE", "FALL" }, 1);
     addAndMakeVisible (syncCombo);
     addAndMakeVisible (rangeCombo);
+    addAndMakeVisible (directionCombo);
     syncComboAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::syncLen, syncCombo);
     rangeComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::pitchRange, rangeCombo);
+    directionAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::direction, directionCombo);
     alignAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
     syncAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync, syncToggle);
+
+    directionCombo.setTitle ("Reverb direction");
+    directionCombo.setTooltip ("RISE: reversed wet swell before the hit. FALL: dry hit followed by forward reverb.");
+    if (auto* parameter = proc.apvts.getParameter (IDs::direction))
+        directionCombo.setHostParameter (*this, *parameter);
 
     rangeLabel.setText ("RANGE", juce::dontSendNotification);
     rangeLabel.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
@@ -803,10 +839,15 @@ void ReverseVerbEditor::timerCallback()
     const int n = proc.getSampleCount();
     countLabel.setText (n > 0 ? juce::String (proc.getSampleIndex() + 1) + " / " + juce::String (n) : "", juce::dontSendNotification);
     const bool sync = proc.param (IDs::sync) > 0.5f;
+    const bool rise = proc.getDirection() == RenderDirection::rise;
     kTail->slider.setEnabled (! sync);
     kTail->slider.setAlpha (sync ? 0.4f : 1.0f);
     syncCombo.setEnabled (sync);
     syncCombo.setAlpha (sync ? 1.0f : 0.5f);
+    alignToggle.setEnabled (rise);
+    alignToggle.setAlpha (rise ? 1.0f : 0.45f);
+    alignToggle.setTooltip (rise ? "Align the dry hit to the note using plugin delay compensation."
+                                 : "FALL starts at the note and requires no lookahead latency.");
     const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     for (auto* k : { kTone, kBass, kWet, kTail, kShape })
         if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col) { k->slider.setColour (juce::Slider::rotarySliderFillColourId, col); k->slider.repaint(); }
@@ -885,6 +926,7 @@ void ReverseVerbEditor::resized()
     dragPad.setBounds (row.removeFromLeft (120));       row.removeFromLeft (6);
     resetButton.setBounds (row.removeFromLeft (100));   row.removeFromLeft (6);
     randomButton.setBounds (row.removeFromLeft (80));   row.removeFromLeft (14);
+    directionCombo.setBounds (row.removeFromLeft (86)); row.removeFromLeft (8);
     alignToggle.setBounds (row.removeFromLeft (150));   row.removeFromLeft (10);
     syncCombo.setBounds (row.removeFromRight (100));    row.removeFromRight (6);
     syncToggle.setBounds (row.removeFromRight (70));

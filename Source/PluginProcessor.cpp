@@ -106,6 +106,19 @@ namespace
 
     const int kSyncBeats[] = { 1, 2, 4, 8, 4, 8, 16 };   // 1,2,4,8 beats / 1,2,4 bars
     const float kPitchOct[] = { 1.0f, 2.0f, 4.0f };
+
+    bool stateContainsParameter (const juce::ValueTree& state, const juce::String& parameterId)
+    {
+        if (state.hasProperty (parameterId)
+            || state.getProperty ("id").toString() == parameterId)
+            return true;
+
+        for (int child = 0; child < state.getNumChildren(); ++child)
+            if (stateContainsParameter (state.getChild (child), parameterId))
+                return true;
+
+        return false;
+    }
 }
 
 // ---------------- parameters ----------------
@@ -143,6 +156,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::volTension,   "Vol Tension",   R { -1.0f, 1.0f, 0.001f }, 0.0f);
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::align, 1 }, "Hit on note (PDC)", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::sync, 1 }, "Sync to BPM", false));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::direction, 1 }, "Direction",
+                     juce::StringArray { "Rise", "Fall" }, 0));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::syncLen, 1 }, "Sync Length",
                      juce::StringArray { "1 beat", "2 beats", "4 beats", "8 beats", "1 bar", "2 bars", "4 bars" }, 2));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::pitchRange, 1 }, "Pitch Range",
@@ -158,7 +173,7 @@ ReverseVerbProcessor::ReverseVerbProcessor()
     for (auto* id : { &IDs::size, &IDs::decay, &IDs::damp, &IDs::diff, &IDs::er, &IDs::sep, &IDs::width, &IDs::gap,
                       &IDs::tail, &IDs::shape, &IDs::tone, &IDs::basscut, &IDs::align, &IDs::trimStart, &IDs::trimEnd,
                       &IDs::sync, &IDs::syncLen, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
-                      &IDs::volStart, &IDs::volEnd, &IDs::volTension })
+                      &IDs::volStart, &IDs::volEnd, &IDs::volTension, &IDs::direction })
         apvts.addParameterListener (*id, this);
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
@@ -167,6 +182,11 @@ ReverseVerbProcessor::ReverseVerbProcessor()
 }
 
 ReverseVerbProcessor::~ReverseVerbProcessor() { stopTimer(); }
+
+RenderDirection ReverseVerbProcessor::getDirection() const noexcept
+{
+    return param (IDs::direction) >= 0.5f ? RenderDirection::fall : RenderDirection::rise;
+}
 
 void ReverseVerbProcessor::setParam (const juce::String& id, float value)
 {
@@ -226,20 +246,11 @@ void ReverseVerbProcessor::startVoice (float gain)
 void ReverseVerbProcessor::renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet)
 {
     if (num <= 0) return;
-    const int total = r.audio.getNumSamples();
-    const int hitAt = r.hitIndex >= 0 ? r.hitIndex : total;
-    const int numCh = out.getNumChannels();
+    const int total = r.getNumSamples();
     for (auto& v : voices)
     {
         if (! v.active) continue;
-        for (int ch = 0; ch < numCh; ++ch)
-        {
-            auto* o = out.getWritePointer (ch) + start;
-            const float* s = r.audio.getReadPointer (juce::jmin (ch, 1));
-            int pos = v.pos;
-            for (int i = 0; i < num && pos < total; ++i, ++pos)
-                o[i] += s[pos] * (pos < hitAt ? wet : dry) * v.gain;
-        }
+        mixRenderedRange (out, r, v.pos, start, num, wet * v.gain, dry * v.gain);
         v.pos += num;
         if (v.pos >= total) v.active = false;
     }
@@ -255,13 +266,8 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             if (auto bpm = pos->getBpm())
                 if (*bpm > 20.0) hostBpm = *bpm;
 
-    std::shared_ptr<const RenderedSample> r;
-    {
-        juce::SpinLock::ScopedTryLockType tl (renderLock);
-        if (! tl.isLocked()) return;
-        r = rendered;
-    }
-    if (r == nullptr || r->audio.getNumSamples() == 0) { playhead = -1; return; }
+    const auto r = std::atomic_load_explicit (&rendered, std::memory_order_acquire);
+    if (r == nullptr || r->getNumSamples() == 0) { playhead = -1; return; }
 
     if (stopRequest.exchange (0) != 0) for (auto& v : voices) v.active = false;
     if (triggerRequest.exchange (0) != 0) startVoice (1.0f);
@@ -286,8 +292,7 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
 std::shared_ptr<const RenderedSample> ReverseVerbProcessor::getRendered() const
 {
-    juce::SpinLock::ScopedLockType l (renderLock);
-    return rendered;
+    return std::atomic_load_explicit (&rendered, std::memory_order_acquire);
 }
 
 void ReverseVerbProcessor::timerCallback()
@@ -307,8 +312,10 @@ void ReverseVerbProcessor::render()
     auto out = std::make_shared<RenderedSample>();
     const double sr = hostSampleRate;
     const double bpm = hostBpm.load();
+    const auto direction = getDirection();
     lastRenderBpm = bpm;
     out->sampleRate = sr;
+    out->direction = direction;
 
     if (src.getNumSamples() > 0 && srcSR > 0)
     {
@@ -350,8 +357,10 @@ void ReverseVerbProcessor::render()
         engine.setup (sr, param (IDs::size), param (IDs::decay), param (IDs::damp), param (IDs::diff), param (IDs::sep), param (IDs::width), param (IDs::er));
         engine.process (rev.getWritePointer (0), rev.getWritePointer (1), revLen);
 
-        // 4. reverse
-        for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
+        // 4. Orient the wet response. The reverb engine is wet-only, so the
+        // dry transient is mixed exclusively from the separate dry layer.
+        if (direction == RenderDirection::rise)
+            for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
 
         // 5. filters
         auto applyIIR = [&] (const juce::IIRCoefficients& c, int passes)
@@ -369,20 +378,35 @@ void ReverseVerbProcessor::render()
         if (std::abs (s) > 0.001f && revLen > 1)
             for (int i = 0; i < revLen; ++i)
             {
-                const float x = (float) i / (float) (revLen - 1);
-                const float g = s > 0.0f ? std::pow (x, 4.0f * s) : 1.0f + (-s) * 3.0f * (1.0f - x);
+                const float timelineProgress = (float) i / (float) (revLen - 1);
+                const float towardHit = direction == RenderDirection::rise
+                                          ? timelineProgress
+                                          : 1.0f - timelineProgress;
+                const float g = s > 0.0f ? std::pow (towardHit, 4.0f * s)
+                                         : 1.0f + (-s) * 3.0f * (1.0f - towardHit);
                 for (int ch = 0; ch < 2; ++ch) rev.getWritePointer (ch)[i] *= g;
             }
-        rev.applyGainRamp (0, juce::jmin (revLen, (int) (sr * 0.01)), 0.0f, 1.0f);
+        const int boundaryFade = juce::jmin (revLen, (int) (sr * 0.01));
+        if (direction == RenderDirection::rise)
+            rev.applyGainRamp (0, boundaryFade, 0.0f, 1.0f);
+        else
+            rev.applyGainRamp (revLen - boundaryFade, boundaryFade, 1.0f, 0.0f);
         const float revMag = rev.getMagnitude (0, revLen);
         if (revMag > 0.0f) rev.applyGain (0.9f / revMag);
 
-        // 7. combine: swell + gap + hit
-        const int swellLen = revLen + gapLen;
-        const int fullLen = swellLen + hitLen;
-        juce::AudioBuffer<float> full (2, fullLen);
-        full.clear();
-        for (int ch = 0; ch < 2; ++ch) { full.copyFrom (ch, 0, rev, ch, 0, revLen); full.copyFrom (ch, swellLen, hit, ch, 0, hitLen); }
+        // 7. Place wet and dry on one aligned timeline. Keeping these layers
+        // separate prevents the mix controls from relying on timeline guesses.
+        const auto timeline = calculateLayerTimeline (direction, revLen, hitLen, gapLen);
+        const int fullLen = timeline.totalLength;
+        juce::AudioBuffer<float> fullWet (2, fullLen);
+        juce::AudioBuffer<float> fullDry (2, fullLen);
+        fullWet.clear();
+        fullDry.clear();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            fullWet.copyFrom (ch, timeline.wetStart, rev, ch, 0, revLen);
+            fullDry.copyFrom (ch, timeline.dryStart, hit, ch, 0, hitLen);
+        }
         out->fullLengthSec = fullLen / sr;
         out->beats = beats;
 
@@ -394,46 +418,85 @@ void ReverseVerbProcessor::render()
         const int trimLen = tEnd - tStart;
         out->trimStartSec = tStart / sr;
         out->trimEndSec   = tEnd / sr;
-        int hitIdx = swellLen - tStart;
+        int hitIdx = timeline.dryStart - tStart;
         if (hitIdx < 0 || hitIdx >= trimLen) hitIdx = -1;
+        int dryInputStart = juce::jmax (0, timeline.dryStart - tStart);
+        int dryInputEnd = juce::jmin (trimLen, timeline.dryStart + hitLen - tStart);
+        if (dryInputEnd <= dryInputStart) dryInputStart = dryInputEnd = -1;
+        int wetInputStart = juce::jmax (0, timeline.wetStart - tStart);
+        int wetInputEnd = juce::jmin (trimLen, timeline.wetStart + revLen - tStart);
+        if (wetInputEnd <= wetInputStart) wetInputStart = wetInputEnd = -1;
 
         // 9. pitch sweep (varispeed)
         const float pitchAmt = param (IDs::pitch);
         const float octaves = kPitchOct[juce::jlimit (0, 2, (int) param (IDs::pitchRange))];
         const float pitchT = param (IDs::pitchTension);
-        juce::AudioBuffer<float> outBuf;
+        juce::AudioBuffer<float> wetBuffer;
+        juce::AudioBuffer<float> dryBuffer;
         std::vector<float> semiPerSample;
         int hitOut = -1;
+        int dryOutStart = -1, dryOutEnd = -1;
+        int wetOutStart = -1, wetOutEnd = -1;
         if (std::abs (pitchAmt) > 0.001f)
         {
-            std::vector<float> l, r;
-            l.reserve ((size_t) trimLen * 2); r.reserve ((size_t) trimLen * 2);
-            const float* fl = full.getReadPointer (0) + tStart;
-            const float* fr = full.getReadPointer (1) + tStart;
+            std::array<std::vector<float>, 2> wetSamples, drySamples;
+            for (auto& samples : wetSamples) samples.reserve ((size_t) trimLen * 2);
+            for (auto& samples : drySamples) samples.reserve ((size_t) trimLen * 2);
             double p = 0.0;
-            while (p < trimLen - 1 && l.size() < (size_t) (sr * 60.0))
+            while (p < trimLen - 1 && semiPerSample.size() < (size_t) (sr * 60.0))
             {
                 const int i0 = (int) p; const float frac = (float) (p - i0);
-                l.push_back (fl[i0] + (fl[i0 + 1] - fl[i0]) * frac);
-                r.push_back (fr[i0] + (fr[i0 + 1] - fr[i0]) * frac);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const auto* wet = fullWet.getReadPointer (ch) + tStart;
+                    const auto* dry = fullDry.getReadPointer (ch) + tStart;
+                    wetSamples[(size_t) ch].push_back (wet[i0] + (wet[i0 + 1] - wet[i0]) * frac);
+                    drySamples[(size_t) ch].push_back (dry[i0] + (dry[i0 + 1] - dry[i0]) * frac);
+                }
                 const float semis = pitchAmt * octaves * 12.0f * tensionCurve ((float) p / (float) trimLen, pitchT);
                 semiPerSample.push_back (semis);
-                if (hitIdx >= 0 && hitOut < 0 && p >= hitIdx) hitOut = (int) l.size() - 1;
+                const int outputIndex = (int) semiPerSample.size() - 1;
+                if (hitIdx >= 0 && hitOut < 0 && p >= hitIdx) hitOut = outputIndex;
+                if (dryInputStart >= 0 && p >= dryInputStart && p < dryInputEnd)
+                {
+                    if (dryOutStart < 0) dryOutStart = outputIndex;
+                    dryOutEnd = outputIndex + 1;
+                }
+                if (wetInputStart >= 0 && p >= wetInputStart && p < wetInputEnd)
+                {
+                    if (wetOutStart < 0) wetOutStart = outputIndex;
+                    wetOutEnd = outputIndex + 1;
+                }
                 p += std::pow (2.0, semis / 12.0);
             }
-            outBuf.setSize (2, (int) l.size());
-            for (size_t i = 0; i < l.size(); ++i) { outBuf.setSample (0, (int) i, l[i]); outBuf.setSample (1, (int) i, r[i]); }
+            const int outputLength = (int) semiPerSample.size();
+            wetBuffer.setSize (2, outputLength);
+            dryBuffer.setSize (2, outputLength);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                wetBuffer.copyFrom (ch, 0, wetSamples[(size_t) ch].data(), outputLength);
+                dryBuffer.copyFrom (ch, 0, drySamples[(size_t) ch].data(), outputLength);
+            }
         }
         else
         {
-            outBuf.setSize (2, trimLen);
-            for (int ch = 0; ch < 2; ++ch) outBuf.copyFrom (ch, 0, full, ch, tStart, trimLen);
+            wetBuffer.setSize (2, trimLen);
+            dryBuffer.setSize (2, trimLen);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                wetBuffer.copyFrom (ch, 0, fullWet, ch, tStart, trimLen);
+                dryBuffer.copyFrom (ch, 0, fullDry, ch, tStart, trimLen);
+            }
             semiPerSample.assign ((size_t) trimLen, 0.0f);
             hitOut = hitIdx;
+            dryOutStart = dryInputStart;
+            dryOutEnd = dryInputEnd;
+            wetOutStart = wetInputStart;
+            wetOutEnd = wetInputEnd;
         }
 
         // 10. volume envelope
-        const int n = outBuf.getNumSamples();
+        const int n = wetBuffer.getNumSamples();
         const float v0 = param (IDs::volStart), v1 = param (IDs::volEnd), vt = param (IDs::volTension);
         const bool flatVol = std::abs (v0 - 1.0f) < 0.001f && std::abs (v1 - 1.0f) < 0.001f;
         for (int i = 0; i < n; ++i)
@@ -443,18 +506,31 @@ void ReverseVerbProcessor::render()
             {
                 const float lvl = v0 + (v1 - v0) * tensionCurve ((float) i / (float) juce::jmax (1, n - 1), vt);
                 g = lvl * lvl;
-                for (int ch = 0; ch < 2; ++ch) outBuf.getWritePointer (ch)[i] *= g;
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    wetBuffer.getWritePointer (ch)[i] *= g;
+                    dryBuffer.getWritePointer (ch)[i] *= g;
+                }
             }
             if (i % RenderedSample::envStep == 0) { out->gainLin.push_back (g); out->pitchSemi.push_back (semiPerSample[(size_t) i]); }
         }
 
-        out->audio = std::move (outBuf);
-        out->hitIndex = hitOut;
+        out->wetAudio = std::move (wetBuffer);
+        out->dryAudio = std::move (dryBuffer);
+        out->displayAudio.setSize (2, n);
+        out->displayAudio.clear();
+        mixRenderedRange (out->displayAudio, *out, 0, 0, n, 1.0f, 1.0f);
+        out->dryHitIndex = hitOut;
+        out->dryStart = dryOutStart;
+        out->dryEnd = dryOutEnd;
+        out->wetStart = wetOutStart;
+        out->wetEnd = wetOutEnd;
     }
 
-    const int latency = out->hitIndex > 0 ? out->hitIndex : 0;
-    { juce::SpinLock::ScopedLockType l (renderLock); rendered = out; }
-    setLatencySamples (param (IDs::align) > 0.5f ? latency : 0);
+    const int latency = latencySamplesFor (*out, param (IDs::align) > 0.5f);
+    std::shared_ptr<const RenderedSample> immutableOut = std::move (out);
+    std::atomic_store_explicit (&rendered, std::move (immutableOut), std::memory_order_release);
+    setLatencySamples (latency);
 }
 
 // ---------------- samples ----------------
@@ -474,7 +550,8 @@ bool ReverseVerbProcessor::loadSampleFile (const juce::File& f, bool previewAfte
 {
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (f));
     if (reader == nullptr || reader->lengthInSamples <= 0) return false;
-    const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 10.0));
+    const int len = (int) std::min<juce::int64> (reader->lengthInSamples,
+                                                 (juce::int64) (reader->sampleRate * 10.0));
     juce::AudioBuffer<float> buf ((int) reader->numChannels, len);
     reader->read (&buf, 0, len, 0, true, true);
     { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = reader->sampleRate; }
@@ -509,16 +586,11 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
 {
     if (dirty.exchange (false)) render();
     auto r = getRendered();
-    if (r == nullptr || r->audio.getNumSamples() == 0) return false;
-    const int n = r->audio.getNumSamples();
-    const int hitAt = r->hitIndex >= 0 ? r->hitIndex : n;
-    juce::AudioBuffer<float> mix;
-    mix.makeCopyOf (r->audio);
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        mix.applyGain (ch, 0, hitAt, wetParam->load());
-        mix.applyGain (ch, hitAt, n - hitAt, dryParam->load());
-    }
+    if (r == nullptr || r->getNumSamples() == 0) return false;
+    const int n = r->getNumSamples();
+    juce::AudioBuffer<float> mix (2, n);
+    mix.clear();
+    mixRenderedRange (mix, *r, 0, 0, n, wetParam->load(), dryParam->load());
     dest.deleteFile();
     std::unique_ptr<juce::FileOutputStream> os (dest.createOutputStream());
     if (os == nullptr || ! os->openedOk()) return false;
@@ -535,6 +607,7 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
 void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
+    state.setProperty ("schemaVersion", 2, nullptr);
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
@@ -545,7 +618,11 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
     {
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.isValid()) return;
+        const bool hasDirection = stateContainsParameter (state, IDs::direction);
         apvts.replaceState (state);
+        if (! hasDirection)
+            if (auto* direction = apvts.getParameter (IDs::direction))
+                direction->setValueNotifyingHost (direction->convertTo0to1 (0.0f));
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
         dirty = true;

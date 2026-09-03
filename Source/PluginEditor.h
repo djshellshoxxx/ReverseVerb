@@ -123,6 +123,17 @@ private:
     juce::AudioProcessorParameter* parameter = nullptr;
 };
 
+class HostContextComboBox : public juce::ComboBox
+{
+public:
+    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&);
+    void mouseDown (const juce::MouseEvent&) override;
+
+private:
+    juce::AudioProcessorEditor* editor = nullptr;
+    juce::AudioProcessorParameter* parameter = nullptr;
+};
+
 class ReverseVerbEditor : public juce::AudioProcessorEditor,
                           public juce::DragAndDropContainer,
                           public juce::FileDragAndDropTarget,
@@ -156,8 +167,9 @@ private:
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
     juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
     juce::ComboBox syncCombo, rangeCombo;
+    HostContextComboBox directionCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt;
 
     WaveformDisplay waveform;
     DiffusionShape shape;

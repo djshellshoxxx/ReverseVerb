@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include "RenderedSample.h"
 
 namespace IDs
 {
@@ -9,6 +10,7 @@ namespace IDs
     static const juce::String align = "align";
     static const juce::String trimStart = "trimStart", trimEnd = "trimEnd";
     static const juce::String sync = "sync", syncLen = "syncLen";
+    static const juce::String direction = "direction";
     static const juce::String pitch = "pitch", pitchRange = "pitchRange", pitchTension = "pitchTension";
     static const juce::String volStart = "volStart", volEnd = "volEnd", volTension = "volTension";
 }
@@ -21,20 +23,6 @@ inline float tensionCurve (float x, float t)
     const float k = 1.0f + 5.0f * std::abs (t);
     return t > 0.0f ? std::pow (x, k) : 1.0f - std::pow (1.0f - x, k);
 }
-
-struct RenderedSample
-{
-    juce::AudioBuffer<float> audio;     // final playable buffer (stereo)
-    int hitIndex = -1;                  // sample where the dry hit starts, -1 if trimmed out
-    double sampleRate = 44100.0;
-    int beats = 0;                      // >0 when synced: draw this many beat lines
-    int beatsPerBar = 4;
-    double fullLengthSec = 0.0;         // untrimmed swell+hit length
-    double trimStartSec = 0.0, trimEndSec = 0.0;
-    std::vector<float> pitchSemi;       // one entry per envStep samples
-    std::vector<float> gainLin;         // one entry per envStep samples
-    static constexpr int envStep = 256;
-};
 
 class ReverseVerbProcessor : public juce::AudioProcessor,
                              private juce::Timer,
@@ -80,6 +68,7 @@ public:
     std::shared_ptr<const RenderedSample> getRendered() const;
     int getPlayheadPosition() const { return playhead.load(); }
     double getHostBpm() const { return hostBpm.load(); }
+    RenderDirection getDirection() const noexcept;
     float param (const juce::String& id) const { return apvts.getRawParameterValue (id)->load(); }
     void setParam (const juce::String& id, float value);
 
@@ -104,8 +93,7 @@ private:
     juce::Array<juce::File> folderFiles;
     int currentIndex = -1;
 
-    mutable juce::SpinLock renderLock;
-    std::shared_ptr<RenderedSample> rendered;
+    std::shared_ptr<const RenderedSample> rendered;
 
     double hostSampleRate = 44100.0;
     std::atomic<double> hostBpm { 120.0 };

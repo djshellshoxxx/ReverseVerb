@@ -29,7 +29,8 @@ juce_generate_juce_header(ReverseVerb)
 
 target_sources(ReverseVerb PRIVATE
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/RenderedSample.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
     JUCE_WEB_BROWSER=0
@@ -48,7 +49,11 @@ if(BUILD_TESTING)
     juce_generate_juce_header(ReverseVerbTests)
 
     target_sources(ReverseVerbTests PRIVATE
-        Tests/TestMain.cpp)
+        Tests/TestMain.cpp
+        Tests/MusicalTimeTests.cpp
+        Tests/DirectionTests.cpp
+        Source/RenderedSample.cpp
+        Source/MusicalTime.cpp)
 
     target_compile_definitions(ReverseVerbTests PRIVATE
         JUCE_UNIT_TESTS=1
@@ -56,6 +61,7 @@ if(BUILD_TESTING)
         JUCE_USE_CURL=0)
 
     target_link_libraries(ReverseVerbTests PRIVATE
+        juce::juce_audio_basics
         juce::juce_core
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
