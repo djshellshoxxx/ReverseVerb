@@ -23,15 +23,18 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
+          - name: build-linux
             os: ubuntu-latest
             plugin_targets: ReverseVerb_VST3 ReverseVerb_Standalone
-          - name: Windows
+            artifact_root: build/release/ReverseVerb_artefacts/Release
+            pluginval_asset: pluginval_Linux.zip
+            pluginval_sha256: c01c49d8063965c4c2dea8324468336768f5c9139e0b1caebde14c2400b55352
+          - name: build-windows
             # windows-latest moved to VS 2026 in June 2026. JUCE and this
             # preset intentionally target the widely available VS 2022 toolchain.
             os: windows-2022
@@ -42,9 +45,15 @@ jobs:
             configure_release: windows
             build_release: build-windows-release
             test_release: test-windows-release
-          - name: macOS
+            artifact_root: build/windows/ReverseVerb_artefacts/Release
+            pluginval_asset: pluginval_Windows.zip
+            pluginval_sha256: c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab
+          - name: build-macos
             os: macos-latest
             plugin_targets: ReverseVerb_VST3 ReverseVerb_AU ReverseVerb_Standalone
+            artifact_root: build/release/ReverseVerb_artefacts/Release
+            pluginval_asset: pluginval_macOS.zip
+            pluginval_sha256: 3c4c533bda0c5059eea3ddaea752d757ee2025041f0f47e6bcb0e87f6082b29f
 
     steps:
       - name: Check out source
@@ -61,11 +70,25 @@ jobs:
             libfreetype-dev libfontconfig1-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxrandr-dev libxrender-dev \
-            libglu1-mesa-dev mesa-common-dev
+            libglu1-mesa-dev mesa-common-dev xvfb
+
+      - name: Cache JUCE source
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .cache/JUCE
+          key: juce-8.0.4-${{ runner.os }}
+
+      - name: Fetch pinned JUCE
+        shell: bash
+        run: |
+          if [ ! -f .cache/JUCE/CMakeLists.txt ]; then
+            mkdir -p .cache
+            git clone --branch 8.0.4 --depth 1 https://github.com/juce-framework/JUCE.git .cache/JUCE
+          fi
 
       - name: Configure Debug
         shell: bash
-        run: cmake --preset "${{ matrix.configure_debug || 'debug' }}"
+        run: cmake --preset "${{ matrix.configure_debug || 'debug' }}" -DRV_JUCE_SOURCE_DIR=.cache/JUCE
 
       - name: Build and test Debug
         shell: bash
@@ -75,13 +98,64 @@ jobs:
 
       - name: Configure Release
         shell: bash
-        run: cmake --preset "${{ matrix.configure_release || 'release' }}"
+        run: cmake --preset "${{ matrix.configure_release || 'release' }}" -DRV_JUCE_SOURCE_DIR=.cache/JUCE
 
       - name: Build and test Release
         shell: bash
         run: |
           cmake --build --preset "${{ matrix.build_release || 'build-release' }}" --target ReverseVerbTests ${{ matrix.plugin_targets }}
           ctest --preset "${{ matrix.test_release || 'test-release' }}"
+
+      - name: Download and verify pluginval 1.0.4
+        shell: bash
+        run: |
+          mkdir -p tools/pluginval validation-logs
+          curl --fail --location --silent --show-error \
+            "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/${{ matrix.pluginval_asset }}" \
+            --output tools/pluginval.zip
+          if command -v sha256sum >/dev/null 2>&1; then
+            echo "${{ matrix.pluginval_sha256 }}  tools/pluginval.zip" | sha256sum --check --strict
+          else
+            test "$(shasum -a 256 tools/pluginval.zip | awk '{print $1}')" = "${{ matrix.pluginval_sha256 }}"
+          fi
+          cd tools/pluginval
+          cmake -E tar xf ../pluginval.zip
+
+      - name: Validate Linux VST3
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x tools/pluginval/pluginval
+          xvfb-run -a tools/pluginval/pluginval \
+            --strictness-level 5 --validate-in-process --output-dir validation-logs \
+            "${{ matrix.artifact_root }}/VST3/ReverseVerb.vst3" \
+            2>&1 | tee validation-logs/pluginval-vst3.log
+
+      - name: Validate Windows VST3
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          tools/pluginval/pluginval.exe \
+            --strictness-level 5 --validate-in-process --output-dir validation-logs \
+            "${{ matrix.artifact_root }}/VST3/ReverseVerb.vst3" \
+            2>&1 | tee validation-logs/pluginval-vst3.log
+
+      - name: Validate macOS VST3 and AU
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          chmod +x tools/pluginval/pluginval.app/Contents/MacOS/pluginval
+          tools/pluginval/pluginval.app/Contents/MacOS/pluginval \
+            --strictness-level 5 --validate-in-process --output-dir validation-logs \
+            "${{ matrix.artifact_root }}/VST3/ReverseVerb.vst3" \
+            2>&1 | tee validation-logs/pluginval-vst3.log
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          cp -R "${{ matrix.artifact_root }}/AU/ReverseVerb.component" "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          tools/pluginval/pluginval.app/Contents/MacOS/pluginval \
+            --strictness-level 5 --validate-in-process --output-dir validation-logs \
+            "$HOME/Library/Audio/Plug-Ins/Components/ReverseVerb.component" \
+            2>&1 | tee validation-logs/pluginval-au.log
 
       - name: Upload Release artifacts and test logs
         if: always()
@@ -92,6 +166,7 @@ jobs:
           path: |
             build/windows/ReverseVerb_artefacts/Release/**
             build/release/ReverseVerb_artefacts/Release/**
+            validation-logs/**
             build/windows/Testing/Temporary/**
             build/debug/Testing/Temporary/**
             build/release/Testing/Temporary/**

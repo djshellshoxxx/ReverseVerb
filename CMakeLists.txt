@@ -6,12 +6,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
 
-include(FetchContent)
-FetchContent_Declare(JUCE
-    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-    GIT_TAG 8.0.4
-    GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(JUCE)
+set(RV_JUCE_SOURCE_DIR "" CACHE PATH "Optional path to a pre-fetched JUCE 8.0.4 checkout")
+if(RV_JUCE_SOURCE_DIR)
+    add_subdirectory("${RV_JUCE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE")
+else()
+    include(FetchContent)
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG 8.0.4
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(JUCE)
+endif()
 
 juce_add_plugin(ReverseVerb
     COMPANY_NAME "SheldonDavidson"
