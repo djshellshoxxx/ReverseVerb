@@ -34,6 +34,12 @@ jobs:
           - name: Windows
             os: windows-latest
             plugin_targets: ReverseVerb_VST3 ReverseVerb_Standalone
+            configure_debug: windows
+            build_debug: build-windows-debug
+            test_debug: test-windows-debug
+            configure_release: windows
+            build_release: build-windows-release
+            test_release: test-windows-release
           - name: macOS
             os: macos-latest
             plugin_targets: ReverseVerb_VST3 ReverseVerb_AU ReverseVerb_Standalone
@@ -57,23 +63,23 @@ jobs:
 
       - name: Configure Debug
         shell: bash
-        run: cmake --preset debug
+        run: cmake --preset "${{ matrix.configure_debug || 'debug' }}"
 
       - name: Build and test Debug
         shell: bash
         run: |
-          cmake --build --preset build-debug --target ReverseVerbTests ${{ matrix.plugin_targets }}
-          ctest --preset test-debug
+          cmake --build --preset "${{ matrix.build_debug || 'build-debug' }}" --target ReverseVerbTests ${{ matrix.plugin_targets }}
+          ctest --preset "${{ matrix.test_debug || 'test-debug' }}"
 
       - name: Configure Release
         shell: bash
-        run: cmake --preset release
+        run: cmake --preset "${{ matrix.configure_release || 'release' }}"
 
       - name: Build and test Release
         shell: bash
         run: |
-          cmake --build --preset build-release --target ReverseVerbTests ${{ matrix.plugin_targets }}
-          ctest --preset test-release
+          cmake --build --preset "${{ matrix.build_release || 'build-release' }}" --target ReverseVerbTests ${{ matrix.plugin_targets }}
+          ctest --preset "${{ matrix.test_release || 'test-release' }}"
 
       - name: Upload Release artifacts and test logs
         if: always()
@@ -82,6 +88,8 @@ jobs:
           name: ReverseVerb-${{ matrix.name }}-${{ github.sha }}
           if-no-files-found: warn
           path: |
+            build/windows/ReverseVerb_artefacts/Release/**
             build/release/ReverseVerb_artefacts/Release/**
+            build/windows/Testing/Temporary/**
             build/debug/Testing/Temporary/**
             build/release/Testing/Temporary/**

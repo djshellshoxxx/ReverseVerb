@@ -17,6 +17,6 @@ if (-not (Get-Command cmake -ErrorAction SilentlyContinue) -or
 
 cmake --version
 ninja --version
-cmake --preset $Preset
-cmake --build --preset "build-$Preset"
-ctest --preset "test-$Preset"
+cmake --preset windows
+cmake --build --preset "build-windows-$Preset"
+ctest --preset "test-windows-$Preset"

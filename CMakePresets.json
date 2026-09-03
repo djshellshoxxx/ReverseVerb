@@ -9,8 +9,6 @@
     {
       "name": "base",
       "hidden": true,
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "BUILD_TESTING": "ON",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
@@ -18,9 +16,16 @@
       }
     },
     {
+      "name": "ninja-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
       "name": "debug",
       "displayName": "Debug",
-      "inherits": "base",
+      "inherits": "ninja-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
@@ -28,10 +33,18 @@
     {
       "name": "release",
       "displayName": "Release",
-      "inherits": "base",
+      "inherits": "ninja-base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows (Visual Studio 2022)",
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows"
     }
   ],
   "buildPresets": [
@@ -43,6 +56,18 @@
     {
       "name": "build-release",
       "configurePreset": "release",
+      "jobs": 2
+    },
+    {
+      "name": "build-windows-debug",
+      "configurePreset": "windows",
+      "configuration": "Debug",
+      "jobs": 2
+    },
+    {
+      "name": "build-windows-release",
+      "configurePreset": "windows",
+      "configuration": "Release",
       "jobs": 2
     }
   ],
@@ -57,6 +82,22 @@
     {
       "name": "test-release",
       "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "test-windows-debug",
+      "configurePreset": "windows",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "test-windows-release",
+      "configurePreset": "windows",
+      "configuration": "Release",
       "output": {
         "outputOnFailure": true
       }
