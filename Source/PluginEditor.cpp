@@ -1,6 +1,8 @@
 #include "PluginEditor.h"
 #include "GatePatternClipboard.h"
 
+#include <array>
+
 using namespace RVColours;
 
 juce::Colour RVColours::swellColour (float toneHz, float bassCutHz)
@@ -871,9 +873,15 @@ void DragOutPad::mouseDrag (const juce::MouseEvent& e)
 
 static const char* kHelpText = R"(REVERSE VERB - what everything does
 
+PAGES
+  MAIN / MOD / FX / GATOR tabs switch which controls are showing, so the window stays small - they don't change anything by themselves.
+  MAIN: Reverb, Tempo, Swell, and Mix.  MOD: Pitch, Transpose, Stretch, Volume, Pan, and the LFO.  FX: the delay/chorus/echo effect.  GATOR: the step gate.
+  The waveform, transport row, and generate/preset rows above the tabs are always visible regardless of page.
+
 WORKFLOW
   LOAD (or drop a file on the window) picks a hit. < > steps through every sample in that folder and auto-plays it with your current settings.
-  GENERATE: SNARE / HAT / CLAP synthesizes a fresh one-shot instead of browsing for one; click again for a new variation.
+  GENERATE: pick a hit type from the dropdown (Snare, Hat, Clap, Bass Drum, Horn, String, Pluck, Rimshot, Triangle, Tuba) and click GENERATE to synthesize a fresh one-shot; click again for a new variation.
+  HIT (checkbox, next to GENERATE): turn off to play the swell with no dry hit at all - a pure reverse-reverb/riser with nothing underneath it. On restores the dry hit at the HIT knob's level.
   PRESET recalls a full settings snapshot (every knob plus the gator pattern) without touching whichever sample is loaded.
   Factory presets ship built in; SAVE names the current settings as a new preset, DEL removes a selected user preset (factory presets can't be deleted).
   Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.
@@ -882,7 +890,7 @@ WORKFLOW
   EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
   RISE puts reversed reverb before the hit. FALL puts the dry hit first and plays the forward reverb decay after the selected DELAY.
   Hit on note (PDC): in RISE, reports the dry-hit offset as latency so the hit lands exactly on the note. FALL needs no lookahead, so PDC is disabled.
-  RESET EDITS clears trim, pitch, transpose, stretch, and the volume/pan envelopes (leaves the gator untouched). RANDOM rolls new reverb settings.
+  RESET EDITS clears trim, pitch, transpose, stretch, and the volume/pan envelopes (leaves the gator and FX untouched). RANDOM rolls new reverb settings.
   NORMALIZE raises or lowers Output Gain so the current Hit/Swell mix peaks just under 0 dB. UNDO/REDO step back and forward through any change - knobs, toggles, envelope points, or the gator.
 
 WAVEFORM
@@ -903,19 +911,27 @@ REVERB
 SWELL
   LENGTH: seconds of reverb tail (disabled when SYNC is on).  SHAPE: bends the swell envelope (negative = fuller early, positive = late rush).
   COLOR: low-pass filter on the swell.  BASS CUT: high-pass filter on the swell, keeps sub out of your break.
-  STRETCH: time-stretches the loaded sample itself, up to 64x, pitch unchanged. Unlike LENGTH (which only extends the reverb tail), this spreads the actual source material across the whole timeline - the way to build a genuine full-length riser or faller (psytrance/trance style) instead of a short hit with a long reverb hanging off it. 1x = off.
 
 SYNC
   SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-64 bar lengths from 1/64T upward.
   With SYNC off, the free LENGTH knob stretches the tail up to 3 minutes for long, drawn-out rises and falls.
   TEMPO: HOST BPM follows the DAW's tempo. Turn it off to set your own BPM with the knob next to it (also used by Standalone, or to deliberately decouple from the host).
 
-PITCH
+PITCH  (MOD page)
   PITCH sweeps the pitch from 0 at the start to the knob amount at the end. Range chooses 1, 2 or 4 octaves. CURVE box: drag up/down to change how fast the sweep happens.
   TRANSPOSE shifts the pitch of the whole rendered hit and tail by a fixed amount (+/-48 semitones), on top of the sweep above - use it to simply tune the sample up or down.
 
+STRETCH  (MOD page)
+  Time-stretches the loaded sample itself, up to 64x, pitch unchanged. Unlike LENGTH on the MAIN page (which only extends the reverb tail), this spreads the actual source material across the whole timeline - the way to build a genuine full-length riser or faller (psytrance/trance style) instead of a short hit with a long reverb hanging off it. 1x = off.
+
 MIX
-  HIT: level of the dry hit.  SWELL: level of the wet rise or fall.
+  HIT: level of the dry hit (silenced entirely when the HIT checkbox above the waveform is off).  SWELL: level of the wet rise or fall.
+
+FX  (delay / chorus / echo, FX page)
+  A single modulated delay line that reads as different things depending on its settings: short TIME + high MOD DEPTH sounds like a chorus; longer TIME + FEEDBACK sounds like an echo/delay; settings in between blend the two, or add FEEDBACK on top of a chorus for a combination of all three.
+  MIX: dry/wet blend. FEEDBACK: number/length of repeats. MOD RATE / MOD DEPTH: speed and amount of the delay-time wobble that creates the chorus character.
+  ORDER: Before Reverse applies it before this plugin's own Rise-mode reversal, so its repeats get flipped backwards too - a true reverse echo/delay/chorus. After Reverse keeps the repeats forward, sitting on top of the already-reversed swell. FALL never reverses, so ORDER has no audible effect in FALL mode.
+  The FX toggle (top-left of the page) enables/disables the whole effect.
 
 VOLUME
   START/END set the level at the beginning and end of the timeline; TENSION bends the curve between them. Add more points directly on the waveform's volume line for multi-stage swells.
@@ -1187,13 +1203,21 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     addAndMakeVisible (countLabel);
 
     for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &helpButton,
-                     &normalizeButton, &undoButton, &redoButton,
-                     &generateSnareButton, &generateHatButton, &generateClapButton })
+                     &normalizeButton, &undoButton, &redoButton, &generateButton })
         addAndMakeVisible (b);
     generateLabel.setText ("GENERATE", juce::dontSendNotification);
     generateLabel.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     generateLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (generateLabel);
+    addAndMakeVisible (generateCombo);
+    generateCombo.addItemList ({ "Snare", "Hat", "Clap", "Bass Drum", "Horn", "String", "Pluck", "Rimshot", "Triangle", "Tuba" }, 1);
+    generateCombo.setSelectedItemIndex (0, juce::dontSendNotification);
+    generateCombo.setTooltip ("Choose a hit type, then GENERATE to synthesize a fresh one-shot to feed the Rise/Fall engine.");
+    addAndMakeVisible (hitEnabledToggle);
+    hitEnabledToggle.setTooltip ("Off: the swell plays with no dry hit at all. On: the HIT knob sets the dry hit's level as usual.");
+    hitEnabledAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::hitEnabled, hitEnabledToggle);
+    if (auto* parameter = proc.apvts.getParameter (IDs::hitEnabled))
+        hitEnabledToggle.setHostParameter (*this, *parameter, proc);
 
     presetLabel.setText ("PRESET", juce::dontSendNotification);
     presetLabel.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
@@ -1396,12 +1420,17 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
             proc.refreshGatePatternFromState();
     };
 
-    generateSnareButton.onClick = [this] { proc.generateSample (rv::GeneratedSampleType::snare); };
-    generateHatButton.onClick   = [this] { proc.generateSample (rv::GeneratedSampleType::hat); };
-    generateClapButton.onClick  = [this] { proc.generateSample (rv::GeneratedSampleType::clap); };
-    generateSnareButton.setTooltip ("Synthesize a new snare one-shot to feed the Rise/Fall engine.");
-    generateHatButton.setTooltip ("Synthesize a new hi-hat one-shot to feed the Rise/Fall engine.");
-    generateClapButton.setTooltip ("Synthesize a new clap one-shot to feed the Rise/Fall engine.");
+    generateButton.onClick = [this]
+    {
+        static constexpr std::array<rv::GeneratedSampleType, 10> types {
+            rv::GeneratedSampleType::snare, rv::GeneratedSampleType::hat, rv::GeneratedSampleType::clap,
+            rv::GeneratedSampleType::bassDrum, rv::GeneratedSampleType::horn, rv::GeneratedSampleType::string,
+            rv::GeneratedSampleType::pluck, rv::GeneratedSampleType::rimshot, rv::GeneratedSampleType::triangle,
+            rv::GeneratedSampleType::tuba
+        };
+        const auto index = juce::jlimit (0, (int) types.size() - 1, generateCombo.getSelectedItemIndex());
+        proc.generateSample (types[(size_t) index]);
+    };
 
     loadButton.onClick = [this]
     {
@@ -1456,12 +1485,82 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     lfoTargetLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (lfoTargetLabel);
 
+    kFxTime = &makeKnob (IDs::fxTime, "TIME");
+    kFxFeedback = &makeKnob (IDs::fxFeedback, "FEEDBACK");
+    kFxModRate = &makeKnob (IDs::fxModRate, "MOD RATE");
+    kFxModDepth = &makeKnob (IDs::fxModDepth, "MOD DEPTH");
+    kFxMix = &makeKnob (IDs::fxMix, "MIX");
+    addAndMakeVisible (fxEnabledToggle);
+    fxEnabledToggle.setTooltip ("Enables the delay/chorus/echo effect below. Right-click for host automation.");
+    fxEnabledAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::fxEnabled, fxEnabledToggle);
+    if (auto* parameter = proc.apvts.getParameter (IDs::fxEnabled))
+        fxEnabledToggle.setHostParameter (*this, *parameter, proc);
+    addAndMakeVisible (fxOrderCombo);
+    fxOrderCombo.addItemList ({ "Before Reverse", "After Reverse" }, 1);
+    fxOrderCombo.setTooltip ("Before Reverse: its echoes get flipped backwards too (a true reverse echo/delay/chorus) in RISE mode. After Reverse: normal-direction echoes on top of the swell.");
+    fxOrderAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::fxOrder, fxOrderCombo);
+    if (auto* parameter = proc.apvts.getParameter (IDs::fxOrder))
+        fxOrderCombo.setHostParameter (*this, *parameter, proc);
+    fxOrderLabel.setText ("ORDER", juce::dontSendNotification);
+    fxOrderLabel.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    fxOrderLabel.setJustificationType (juce::Justification::centred);
+    fxOrderLabel.setColour (juce::Label::textColourId, textDim);
+    addAndMakeVisible (fxOrderLabel);
+    kFxTime->slider.setTooltip ("Short + high Mod Depth reads as chorus; longer + Feedback reads as echo/delay. Right-click for host automation.");
+
+    // Tabs: everything below the transport row is paged, one screen's worth at
+    // a time, so the plugin stays usable at a much smaller window size.
+    for (auto* t : { &tabMain, &tabMod, &tabFx, &tabGator })
+    {
+        addAndMakeVisible (t);
+        t->setClickingTogglesState (true);
+        t->setRadioGroupId (9001, juce::dontSendNotification);
+    }
+    tabMain.setToggleState (true, juce::dontSendNotification);
+    tabMain.onClick  = [this] { showPage (Page::main); };
+    tabMod.onClick   = [this] { showPage (Page::mod); };
+    tabFx.onClick    = [this] { showPage (Page::fx); };
+    tabGator.onClick = [this] { showPage (Page::gator); };
+
+    mainPage = { &kSize->slider, &kSize->label, &kDecay->slider, &kDecay->label, &kDamp->slider, &kDamp->label,
+                 &kDiff->slider, &kDiff->label, &kEr->slider, &kEr->label, &kSep->slider, &kSep->label,
+                 &kWidth->slider, &kWidth->label, &kGap->slider, &kGap->label,
+                 &bpmSyncToggle, &kBpm->slider, &kBpm->label,
+                 &kTail->slider, &kTail->label, &kShape->slider, &kShape->label,
+                 &kTone->slider, &kTone->label, &kBass->slider, &kBass->label,
+                 &kDry->slider, &kDry->label, &kWet->slider, &kWet->label };
+    modPage = { &kPitch->slider, &kPitch->label, &rangeLabel, &rangeCombo, &pitchTension,
+                &kTranspose->slider, &kTranspose->label, &kStretch->slider, &kStretch->label,
+                &kVolStart->slider, &kVolStart->label, &kVolEnd->slider, &kVolEnd->label, &kVolTension->slider, &kVolTension->label,
+                &kPanStart->slider, &kPanStart->label, &kPanEnd->slider, &kPanEnd->label, &kPanTension->slider, &kPanTension->label,
+                &kLfoRate->slider, &kLfoRate->label, &kLfoDepth->slider, &kLfoDepth->label, &kLfoShape->slider, &kLfoShape->label,
+                &lfoTargetLabel, &lfoTargetCombo };
+    fxPage = { &fxEnabledToggle, &kFxTime->slider, &kFxTime->label, &kFxFeedback->slider, &kFxFeedback->label,
+               &kFxModRate->slider, &kFxModRate->label, &kFxModDepth->slider, &kFxModDepth->label,
+               &kFxMix->slider, &kFxMix->label, &fxOrderLabel, &fxOrderCombo };
+    gatorPage = { &gateToggle, &gateStepsCombo, &gateRateCombo, &gateRetriggerCombo, &gateTargetCombo, &gateShapeCombo,
+                  &kGateDepth->slider, &kGateDepth->label, &kGateSmooth->slider, &kGateSmooth->label,
+                  &kGateSwing->slider, &kGateSwing->label, &kGatePhase->slider, &kGatePhase->label,
+                  &gateClear, &gateFill, &gateInvert, &gateRandom, &gateLeft, &gateRight,
+                  &gateCopy, &gatePaste, &gateUndo, &gateRedo, &gatePatternEditor };
+
     addChildComponent (help);
     setResizable (true, true);
-    setResizeLimits (1200, 1080, 1700, 1420);
-    setSize (1300, 1150);
+    setResizeLimits (860, 700, 1500, 1150);
+    setSize (960, 760);
+    showPage (Page::main);
     startTimerHz (10);
     timerCallback();
+}
+
+void ReverseVerbEditor::showPage (Page page)
+{
+    currentPage = page;
+    for (auto* c : mainPage)  c->setVisible (page == Page::main);
+    for (auto* c : modPage)   c->setVisible (page == Page::mod);
+    for (auto* c : fxPage)    c->setVisible (page == Page::fx);
+    for (auto* c : gatorPage) c->setVisible (page == Page::gator);
+    resized();
 }
 
 ReverseVerbEditor::~ReverseVerbEditor() { setLookAndFeel (nullptr); }
@@ -1674,11 +1773,11 @@ void ReverseVerbEditor::resized()
     // sample generator row (an alternative to LOAD: synthesize a hit instead of browsing for one)
     area.removeFromTop (8);
     auto genRow = area.removeFromTop (26);
-    generateLabel.setBounds (genRow.removeFromLeft (72));
+    generateLabel.setBounds (genRow.removeFromLeft (64));
     genRow.removeFromLeft (6);
-    generateSnareButton.setBounds (genRow.removeFromLeft (64)); genRow.removeFromLeft (6);
-    generateHatButton.setBounds (genRow.removeFromLeft (64));   genRow.removeFromLeft (6);
-    generateClapButton.setBounds (genRow.removeFromLeft (64));
+    generateCombo.setBounds (genRow.removeFromLeft (110)); genRow.removeFromLeft (6);
+    generateButton.setBounds (genRow.removeFromLeft (84));
+    hitEnabledToggle.setBounds (genRow.removeFromRight (60));
 
     // preset row: recall/save/delete a full settings snapshot (independent of the loaded sample)
     area.removeFromTop (8);
@@ -1714,8 +1813,17 @@ void ReverseVerbEditor::resized()
     syncCombo.setBounds (row.removeFromRight (100));    row.removeFromRight (6);
     syncToggle.setBounds (row.removeFromRight (86));
 
-    // Gator and knob rows
+    // Tab bar: everything below is paged, one screen's worth at a time.
     area.removeFromTop (12);
+    auto tabRow = area.removeFromTop (28);
+    const int tabWidth = tabRow.getWidth() / 4;
+    tabMain.setBounds (tabRow.removeFromLeft (tabWidth).reduced (2, 0));
+    tabMod.setBounds (tabRow.removeFromLeft (tabWidth).reduced (2, 0));
+    tabFx.setBounds (tabRow.removeFromLeft (tabWidth).reduced (2, 0));
+    tabGator.setBounds (tabRow.reduced (2, 0));
+
+    area.removeFromTop (10);
+    auto pageArea = area;
     auto group = [&] (juce::Rectangle<int>& src, int width, const juce::String& name)
     {
         auto r = src.removeFromLeft (width);
@@ -1724,74 +1832,97 @@ void ReverseVerbEditor::resized()
         return r.reduced (6).withTrimmedTop (14);
     };
 
-    auto gateBounds = area.removeFromBottom (190);
-    area.removeFromBottom (10);
-    groups.push_back ({ "GATOR", gateBounds });
-    auto gateArea = gateBounds.reduced (8).withTrimmedTop (16);
-    auto gateKnobs = gateArea.removeFromRight (360);
-    gateArea.removeFromRight (8);
-    layoutKnobs (gateKnobs, { kGateDepth, kGateSmooth, kGateSwing, kGatePhase });
-
-    auto gateControls = gateArea.removeFromTop (28);
-    gateToggle.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
-    gateStepsCombo.setBounds (gateControls.removeFromLeft (54)); gateControls.removeFromLeft (4);
-    gateRateCombo.setBounds (gateControls.removeFromLeft (68)); gateControls.removeFromLeft (4);
-    gateRetriggerCombo.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
-    gateTargetCombo.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
-    gateShapeCombo.setBounds (gateControls.removeFromLeft (112));
-    gateArea.removeFromTop (5);
-
-    auto gateButtons = gateArea.removeFromTop (26);
-    const std::array<juce::TextButton*, 10> buttons { &gateClear, &gateFill, &gateInvert, &gateRandom,
-                                                     &gateLeft, &gateRight, &gateCopy, &gatePaste,
-                                                     &gateUndo, &gateRedo };
-    const auto buttonWidth = gateButtons.getWidth() / (int) buttons.size();
-    for (auto* button : buttons)
-        button->setBounds (gateButtons.removeFromLeft (buttonWidth).reduced (1, 0));
-    gateArea.removeFromTop (5);
-    gatePatternEditor.setBounds (gateArea);
-
-    const int rowH = (area.getHeight() - 20) / 3;
-    auto rowA = area.removeFromTop (rowH);
-    area.removeFromTop (10);
-    auto rowB = area.removeFromTop (rowH);
-    area.removeFromTop (10);
-    auto rowC = area;
-
-    const int wA = rowA.getWidth();
-    const int tempoWidth = 130;
-    layoutKnobs (group (rowA, wA - tempoWidth - 8, "REVERB"), { kSize, kDecay, kDamp, kDiff, kEr, kSep, kWidth, kGap });
-    auto tempoArea = group (rowA, tempoWidth, "TEMPO");
+    switch (currentPage)
     {
-        bpmSyncToggle.setBounds (tempoArea.removeFromTop (18));
-        tempoArea.removeFromTop (4);
-        layoutKnobs (tempoArea, { kBpm });
-    }
+        case Page::main:
+        {
+            const int rowH = (pageArea.getHeight() - 10) / 2;
+            auto rowA = pageArea.removeFromTop (rowH);
+            pageArea.removeFromTop (10);
+            auto rowB = pageArea;
 
-    const int total = rowB.getWidth() - 8 * 3;
-    const int unit = total / 12;
-    layoutKnobs (group (rowB, unit * 5, "SWELL"), { kTail, kStretch, kShape, kTone, kBass });
-    layoutKnobs (group (rowB, unit * 2, "MIX"), { kDry, kWet });
-    auto pitchArea = group (rowB, rowB.getWidth(), "PITCH");
-    {
-        auto right = pitchArea.removeFromRight (74);
-        rangeLabel.setBounds (right.removeFromTop (14));
-        rangeCombo.setBounds (right.removeFromTop (26).reduced (2, 0));
-        right.removeFromTop (6);
-        pitchTension.setBounds (right.withSizeKeepingCentre (64, juce::jmin (64, right.getHeight())));
-        layoutKnobs (pitchArea, { kPitch, kTranspose });
-    }
+            const int tempoWidth = 130;
+            layoutKnobs (group (rowA, rowA.getWidth() - tempoWidth - 8, "REVERB"), { kSize, kDecay, kDamp, kDiff, kEr, kSep, kWidth, kGap });
+            auto tempoArea = group (rowA, tempoWidth, "TEMPO");
+            bpmSyncToggle.setBounds (tempoArea.removeFromTop (18));
+            tempoArea.removeFromTop (4);
+            layoutKnobs (tempoArea, { kBpm });
 
-    const int totalC = rowC.getWidth() - 8 * 2;
-    const int unitC = totalC / 10;
-    layoutKnobs (group (rowC, unitC * 3, "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
-    layoutKnobs (group (rowC, unitC * 3, "PAN  (drag the pink diamonds)"), { kPanStart, kPanEnd, kPanTension });
-    auto lfoArea = group (rowC, rowC.getWidth(), "LFO  (modulates Volume or Pan)");
-    {
-        auto right = lfoArea.removeFromRight (74);
-        lfoTargetLabel.setBounds (right.removeFromTop (14));
-        lfoTargetCombo.setBounds (right.removeFromTop (26).reduced (2, 0));
-        layoutKnobs (lfoArea, { kLfoRate, kLfoDepth, kLfoShape });
+            layoutKnobs (group (rowB, rowB.getWidth() * 2 / 3, "SWELL"), { kTail, kShape, kTone, kBass });
+            layoutKnobs (group (rowB, rowB.getWidth(), "MIX"), { kDry, kWet });
+            break;
+        }
+        case Page::mod:
+        {
+            const int rowH = (pageArea.getHeight() - 10) / 2;
+            auto rowA = pageArea.removeFromTop (rowH);
+            pageArea.removeFromTop (10);
+            auto rowB = pageArea;
+
+            auto pitchArea = group (rowA, rowA.getWidth() * 3 / 5, "PITCH");
+            {
+                auto right = pitchArea.removeFromRight (74);
+                rangeLabel.setBounds (right.removeFromTop (14));
+                rangeCombo.setBounds (right.removeFromTop (26).reduced (2, 0));
+                right.removeFromTop (6);
+                pitchTension.setBounds (right.withSizeKeepingCentre (64, juce::jmin (64, right.getHeight())));
+                layoutKnobs (pitchArea, { kPitch, kTranspose });
+            }
+            layoutKnobs (group (rowA, rowA.getWidth(), "STRETCH  (full-length risers/fallers)"), { kStretch });
+
+            const int totalB = rowB.getWidth() - 8 * 2;
+            const int unitB = totalB / 10;
+            layoutKnobs (group (rowB, unitB * 3, "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
+            layoutKnobs (group (rowB, unitB * 3, "PAN  (drag the pink diamonds)"), { kPanStart, kPanEnd, kPanTension });
+            auto lfoArea = group (rowB, rowB.getWidth(), "LFO  (modulates Volume or Pan)");
+            {
+                auto right = lfoArea.removeFromRight (74);
+                lfoTargetLabel.setBounds (right.removeFromTop (14));
+                lfoTargetCombo.setBounds (right.removeFromTop (26).reduced (2, 0));
+                layoutKnobs (lfoArea, { kLfoRate, kLfoDepth, kLfoShape });
+            }
+            break;
+        }
+        case Page::fx:
+        {
+            auto fxArea = group (pageArea, pageArea.getWidth(), "DELAY / CHORUS / ECHO");
+            auto top = fxArea.removeFromTop (28);
+            fxEnabledToggle.setBounds (top.removeFromLeft (70));
+            auto orderArea = top.removeFromRight (140);
+            fxOrderLabel.setBounds (orderArea.removeFromTop (14));
+            fxOrderCombo.setBounds (orderArea);
+            fxArea.removeFromTop (10);
+            layoutKnobs (fxArea, { kFxTime, kFxFeedback, kFxModRate, kFxModDepth, kFxMix });
+            break;
+        }
+        case Page::gator:
+        {
+            groups.push_back ({ "GATOR", pageArea });
+            auto gateArea = pageArea.reduced (8).withTrimmedTop (14);
+            auto gateKnobs = gateArea.removeFromRight (360);
+            gateArea.removeFromRight (8);
+            layoutKnobs (gateKnobs, { kGateDepth, kGateSmooth, kGateSwing, kGatePhase });
+
+            auto gateControls = gateArea.removeFromTop (28);
+            gateToggle.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
+            gateStepsCombo.setBounds (gateControls.removeFromLeft (54)); gateControls.removeFromLeft (4);
+            gateRateCombo.setBounds (gateControls.removeFromLeft (68)); gateControls.removeFromLeft (4);
+            gateRetriggerCombo.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
+            gateTargetCombo.setBounds (gateControls.removeFromLeft (82)); gateControls.removeFromLeft (4);
+            gateShapeCombo.setBounds (gateControls.removeFromLeft (112));
+            gateArea.removeFromTop (5);
+
+            auto gateButtons = gateArea.removeFromTop (26);
+            const std::array<juce::TextButton*, 10> buttons { &gateClear, &gateFill, &gateInvert, &gateRandom,
+                                                             &gateLeft, &gateRight, &gateCopy, &gatePaste,
+                                                             &gateUndo, &gateRedo };
+            const auto buttonWidth = gateButtons.getWidth() / (int) buttons.size();
+            for (auto* button : buttons)
+                button->setBounds (gateButtons.removeFromLeft (buttonWidth).reduced (1, 0));
+            gateArea.removeFromTop (5);
+            gatePatternEditor.setBounds (gateArea);
+            break;
+        }
     }
 }
 

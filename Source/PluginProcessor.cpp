@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "TimeStretch.h"
+#include "DelayChorus.h"
 
 #include <algorithm>
 #include <cmath>
@@ -167,9 +168,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::lfoRate,      "LFO Rate",      R { 0.02f, 20.0f, 0.001f, 0.3f }, 2.0f, "Hz");
     add (IDs::lfoDepth,     "LFO Depth",     R { 0.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::lfoShape,     "LFO Shape",     R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::fxTime,       "FX Time",       R { 1.0f, 500.0f, 0.01f, 0.3f }, 20.0f, "ms");
+    add (IDs::fxFeedback,   "FX Feedback",   R { 0.0f, 0.95f, 0.001f }, 0.3f);
+    add (IDs::fxModRate,    "FX Mod Rate",   R { 0.02f, 10.0f, 0.001f, 0.3f }, 1.5f, "Hz");
+    add (IDs::fxModDepth,   "FX Mod Depth",  R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::fxMix,        "FX Mix",        R { 0.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::manualBpm,    "BPM",           R { 20.0f, 300.0f, 0.01f }, 120.0f);
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::lfoTarget, 1 }, "LFO Target",
                      juce::StringArray { "Volume", "Pan" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::hitEnabled, 1 }, "Hit Enabled", true));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::fxEnabled, 1 }, "FX Enabled", false));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::fxOrder, 1 }, "FX Order",
+                     juce::StringArray { "Before Reverse", "After Reverse" }, 0));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::align, 1 }, "Hit on note (PDC)", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::sync, 1 }, "Sync to BPM", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::bpmSync, 1 }, "Sync BPM to Host", true));
@@ -221,12 +231,15 @@ ReverseVerbProcessor::ReverseVerbProcessor()
                       &IDs::sync, &IDs::syncLen, &IDs::syncDivisionV2, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
                       &IDs::transpose, &IDs::stretch, &IDs::volStart, &IDs::volEnd, &IDs::volTension,
                       &IDs::panStart, &IDs::panEnd, &IDs::panTension,
-                      &IDs::lfoRate, &IDs::lfoDepth, &IDs::lfoShape, &IDs::lfoTarget, &IDs::direction })
+                      &IDs::lfoRate, &IDs::lfoDepth, &IDs::lfoShape, &IDs::lfoTarget,
+                      &IDs::fxEnabled, &IDs::fxTime, &IDs::fxFeedback, &IDs::fxModRate, &IDs::fxModDepth, &IDs::fxMix, &IDs::fxOrder,
+                      &IDs::direction })
         apvts.addParameterListener (*id, this);
     for (auto& cc : ccToParamIndex)
         cc = -1;
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
+    hitEnabledParam = apvts.getRawParameterValue (IDs::hitEnabled);
     gateEnabledParam = apvts.getRawParameterValue (IDs::gateEnabled);
     gateStepsParam = apvts.getRawParameterValue (IDs::gateSteps);
     gateRateParam = apvts.getRawParameterValue (IDs::gateRate);
@@ -683,7 +696,8 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (triggerRequest.exchange (0) != 0) startVoice (1.0f);
 
     const float outGainLin = juce::Decibels::decibelsToGain (param (IDs::outputGain));
-    const float dry = dryParam->load() * outGainLin, wet = wetParam->load() * outGainLin;
+    const float hitOn = hitEnabledParam->load() >= 0.5f ? 1.0f : 0.0f;
+    const float dry = dryParam->load() * outGainLin * hitOn, wet = wetParam->load() * outGainLin;
     const auto patternSnapshot = getGatePattern();
     const rv::GatePattern fallbackPattern;
     const auto& pattern = patternSnapshot != nullptr ? *patternSnapshot : fallbackPattern;
@@ -803,10 +817,24 @@ void ReverseVerbProcessor::render()
         engine.setup (sr, param (IDs::size), param (IDs::decay), param (IDs::damp), param (IDs::diff), param (IDs::sep), param (IDs::width), param (IDs::er));
         engine.process (rev.getWritePointer (0), rev.getWritePointer (1), revLen);
 
+        // 3b. delay/chorus/echo: a single modulated delay line whose settings can
+        // read as any of the three, or a blend. Placing it before or after the
+        // reversal below is what turns it into a *reverse* echo/delay/chorus -
+        // its repeats get flipped backwards along with the swell, or not.
+        const bool fxOn = param (IDs::fxEnabled) > 0.5f;
+        const bool fxBeforeReverse = (int) param (IDs::fxOrder) == 0;
+        if (fxOn && fxBeforeReverse)
+            rv::applyDelayChorus (rev, revLen, sr, param (IDs::fxTime), param (IDs::fxFeedback),
+                                  param (IDs::fxModRate), param (IDs::fxModDepth), param (IDs::fxMix));
+
         // 4. Orient the wet response. The reverb engine is wet-only, so the
         // dry transient is mixed exclusively from the separate dry layer.
         if (direction == RenderDirection::rise)
             for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
+
+        if (fxOn && ! fxBeforeReverse)
+            rv::applyDelayChorus (rev, revLen, sr, param (IDs::fxTime), param (IDs::fxFeedback),
+                                  param (IDs::fxModRate), param (IDs::fxModDepth), param (IDs::fxMix));
 
         // 5. filters
         auto applyIIR = [&] (const juce::IIRCoefficients& c, int passes)
@@ -1168,7 +1196,9 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
     timing.hasPpqPosition = false;
     rv::GateEngine exportGate;
     exportGate.reset();
-    rv::mixGatedRenderedRange (mix, *r, 0, 0, n, wetParam->load(), dryParam->load(),
+    const float exportOutGainLin = juce::Decibels::decibelsToGain (param (IDs::outputGain));
+    const float exportHitOn = hitEnabledParam->load() >= 0.5f ? 1.0f : 0.0f;
+    rv::mixGatedRenderedRange (mix, *r, 0, 0, n, wetParam->load() * exportOutGainLin, dryParam->load() * exportOutGainLin * exportHitOn,
                                exportGate, pattern, gateSettings, timing, 0, 0,
                                gateEnabledParam->load() >= 0.5f);
     dest.deleteFile();

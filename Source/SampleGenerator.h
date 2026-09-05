@@ -5,7 +5,7 @@
 
 namespace rv
 {
-enum class GeneratedSampleType : std::uint8_t { snare, hat, clap };
+enum class GeneratedSampleType : std::uint8_t { snare, hat, clap, bassDrum, horn, string, pluck, rimshot, triangle, tuba };
 
 // Synthesizes a short stereo one-shot at the given sample rate. The same seed
 // always reproduces the same hit; a fresh seed (e.g. juce::Random::getSystemRandom())

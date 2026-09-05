@@ -22,8 +22,11 @@ public:
     }
 
 private:
-    static constexpr std::array<rv::GeneratedSampleType, 3> allTypes {
-        rv::GeneratedSampleType::snare, rv::GeneratedSampleType::hat, rv::GeneratedSampleType::clap
+    static constexpr std::array<rv::GeneratedSampleType, 10> allTypes {
+        rv::GeneratedSampleType::snare, rv::GeneratedSampleType::hat, rv::GeneratedSampleType::clap,
+        rv::GeneratedSampleType::bassDrum, rv::GeneratedSampleType::horn, rv::GeneratedSampleType::string,
+        rv::GeneratedSampleType::pluck, rv::GeneratedSampleType::rimshot, rv::GeneratedSampleType::triangle,
+        rv::GeneratedSampleType::tuba
     };
 
     void testProducesFiniteAudibleAudio()

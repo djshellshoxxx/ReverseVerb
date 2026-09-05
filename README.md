@@ -13,7 +13,10 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 - Time-signature-aware bars and waveform grids using the host BPM and meter
 - BPM can follow the host or be set manually with the HOST BPM toggle and BPM knob (useful in Standalone or to deliberately decouple from the host)
 - Transpose knob shifts the pitch of the whole rendered hit and tail by a fixed amount, independent of the existing pitch sweep
-- Built-in sample generator: synthesize a snare, hi-hat, or clap one-shot to feed straight into the Rise/Fall engine
+- Built-in sample generator: synthesize a snare, hi-hat, clap, bass drum, horn, string, pluck, rimshot, triangle, or tuba one-shot to feed straight into the Rise/Fall engine
+- HIT checkbox: play the swell with no dry hit at all, or restore it at the HIT knob's level
+- Delay/chorus/echo FX: a single modulated delay line that reads as any of the three (or a blend) depending on its settings, with an Order choice that can flip its repeats backwards along with the Rise-mode reversal for a true reverse echo/delay/chorus
+- Paged UI (MAIN / MOD / FX / GATOR tabs) keeps the window compact and usable at lower resolutions
 - Preset system: factory presets covering short/long, Rise/Fall, synced/free, and gated/pitch-swept starting points, plus save/recall/delete of your own presets (independent of whichever sample is loaded)
 - 16/32-step tempo-synced gator with variable step levels
 - Seven gate shapes: Square, Smooth, Ramp Up, Ramp Down, Triangle, Sine, and Curved

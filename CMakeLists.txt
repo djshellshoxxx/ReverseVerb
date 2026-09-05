@@ -45,7 +45,8 @@ target_sources(ReverseVerb PRIVATE
     Source/PresetManager.cpp
     Source/Envelope.cpp
     Source/EnvelopeState.cpp
-    Source/TimeStretch.cpp)
+    Source/TimeStretch.cpp
+    Source/DelayChorus.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
     JUCE_WEB_BROWSER=0

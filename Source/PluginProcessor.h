@@ -27,6 +27,9 @@ namespace IDs
     static const juce::String stretch = "stretch";
     static const juce::String outputGain = "outputGain";
     static const juce::String lfoRate = "lfoRate", lfoDepth = "lfoDepth", lfoShape = "lfoShape", lfoTarget = "lfoTarget";
+    static const juce::String hitEnabled = "hitEnabled";
+    static const juce::String fxEnabled = "fxEnabled", fxTime = "fxTime", fxFeedback = "fxFeedback";
+    static const juce::String fxModRate = "fxModRate", fxModDepth = "fxModDepth", fxMix = "fxMix", fxOrder = "fxOrder";
     static const juce::String gateEnabled = "gateEnabled", gateSteps = "gateSteps", gateRate = "gateRate";
     static const juce::String gateDepth = "gateDepth", gateSmooth = "gateSmooth", gateSwing = "gateSwing", gatePhase = "gatePhase";
     static const juce::String gateRetrigger = "gateRetrigger", gateTarget = "gateTarget", gateShape = "gateShape";
@@ -192,6 +195,7 @@ private:
     juce::uint32 voiceCounter = 0;
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
+    std::atomic<float>* hitEnabledParam = nullptr;
     std::atomic<float>* gateEnabledParam = nullptr;
     std::atomic<float>* gateStepsParam = nullptr;
     std::atomic<float>* gateRateParam = nullptr;

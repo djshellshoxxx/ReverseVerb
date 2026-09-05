@@ -218,7 +218,10 @@ private:
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
     juce::TextButton normalizeButton { "NORMALIZE" }, undoButton { "UNDO" }, redoButton { "REDO" };
     juce::Label generateLabel;
-    juce::TextButton generateSnareButton { "SNARE" }, generateHatButton { "HAT" }, generateClapButton { "CLAP" };
+    juce::ComboBox generateCombo;
+    juce::TextButton generateButton { "GENERATE" };
+    HostContextToggleButton hitEnabledToggle { "HIT" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hitEnabledAtt;
 
     juce::Label presetLabel;
     juce::ComboBox presetCombo;
@@ -236,10 +239,13 @@ private:
     HostContextComboBox directionCombo, gateStepsCombo, gateRateCombo, gateRetriggerCombo, gateTargetCombo, gateShapeCombo;
     HostContextComboBox lfoTargetCombo;
     juce::Label lfoTargetLabel;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt;
+    HostContextToggleButton fxEnabledToggle { "FX" };
+    HostContextComboBox fxOrderCombo;
+    juce::Label fxOrderLabel;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt, fxEnabledAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt,
                                                                             gateStepsAtt, gateRateAtt, gateRetriggerAtt,
-                                                                            gateTargetAtt, gateShapeAtt, lfoTargetAtt;
+                                                                            gateTargetAtt, gateShapeAtt, lfoTargetAtt, fxOrderAtt;
     juce::TextButton gateClear { "CLEAR" }, gateFill { "FILL" }, gateInvert { "INVERT" }, gateRandom { "RANDOM" },
                      gateLeft { "<" }, gateRight { ">" }, gateCopy { "COPY" }, gatePaste { "PASTE" },
                      gateUndo { "UNDO" }, gateRedo { "REDO" };
@@ -256,9 +262,19 @@ private:
          *kDry, *kWet, *kPitch, *kTranspose, *kVolStart, *kVolEnd, *kVolTension,
          *kPanStart, *kPanEnd, *kPanTension,
          *kLfoRate, *kLfoDepth, *kLfoShape,
+         *kFxTime, *kFxFeedback, *kFxModRate, *kFxModDepth, *kFxMix,
          *kGateDepth, *kGateSmooth, *kGateSwing, *kGatePhase, *kBpm;
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;
+
+    // Everything below the transport row is paged, so only one screen's worth
+    // of controls needs to fit at a time - this is what lets the plugin work
+    // at a much smaller window size despite how many controls it now has.
+    enum class Page { main, mod, fx, gator };
+    Page currentPage = Page::main;
+    juce::TextButton tabMain { "MAIN" }, tabMod { "MOD" }, tabFx { "FX" }, tabGator { "GATOR" };
+    std::vector<juce::Component*> mainPage, modPage, fxPage, gatorPage;
+    void showPage (Page);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReverseVerbEditor)
 };

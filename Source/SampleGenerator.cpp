@@ -161,15 +161,248 @@ juce::AudioBuffer<float> renderClap (double sampleRate, juce::uint32 seed)
     normalise (buffer);
     return buffer;
 }
+
+juce::AudioBuffer<float> renderBassDrum (double sampleRate, juce::uint32 seed)
+{
+    juce::Random rng (seed);
+    const auto sr = (float) sampleRate;
+    const float durationSec = 0.35f + rng.nextFloat() * 0.15f;
+    const int n = juce::jmax (1, (int) (durationSec * sr));
+    juce::AudioBuffer<float> buffer (2, n);
+
+    const float startFreq = 130.0f + rng.nextFloat() * 40.0f;
+    const float endFreq = 42.0f + rng.nextFloat() * 10.0f;
+    const float pitchDecay = 0.045f + rng.nextFloat() * 0.015f;
+    float phase = 0.0f;
+    OnePole clickTone; clickTone.setCutoff (2200.0f, sr);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = (float) i / sr;
+        const float bodyEnv = envelope (t, 0.0005f, 0.32f, 3.0f);
+        const float clickEnv = envelope (t, 0.0002f, 0.006f, 8.0f);
+        const float freq = endFreq + (startFreq - endFreq) * std::exp (-t / pitchDecay);
+        phase += juce::MathConstants<float>::twoPi * freq / sr;
+
+        const float click = clickTone.lowpass (noiseSample (rng)) * clickEnv * 0.5f;
+        const float sample = std::sin (phase) * bodyEnv * 0.95f + click;
+        buffer.setSample (0, i, sample);
+        buffer.setSample (1, i, sample);
+    }
+
+    normalise (buffer);
+    return buffer;
+}
+
+juce::AudioBuffer<float> renderHorn (double sampleRate, juce::uint32 seed)
+{
+    juce::Random rng (seed);
+    const auto sr = (float) sampleRate;
+    const float durationSec = 0.4f + rng.nextFloat() * 0.15f;
+    const int n = juce::jmax (1, (int) (durationSec * sr));
+    juce::AudioBuffer<float> buffer (2, n);
+
+    const float fundamental = 155.0f + rng.nextFloat() * 35.0f;
+    static constexpr std::array<float, 5> harmonicRatio { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f };
+    static constexpr std::array<float, 5> harmonicLevel { 1.0f, 0.55f, 0.7f, 0.3f, 0.35f };
+    std::array<float, 5> phases {};
+    OnePole tone; tone.setCutoff (3200.0f, sr);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = (float) i / sr;
+        const float env = envelope (t, 0.015f, 0.28f, 2.2f);
+        float mix = 0.0f;
+        for (size_t k = 0; k < harmonicRatio.size(); ++k)
+        {
+            mix += std::sin (phases[k]) * harmonicLevel[k];
+            phases[k] += juce::MathConstants<float>::twoPi * fundamental * harmonicRatio[k] / sr;
+        }
+        const float sample = tone.lowpass (mix) * env * 0.35f;
+        buffer.setSample (0, i, sample);
+        buffer.setSample (1, i, sample);
+    }
+
+    normalise (buffer);
+    return buffer;
+}
+
+juce::AudioBuffer<float> renderString (double sampleRate, juce::uint32 seed)
+{
+    juce::Random rng (seed);
+    const auto sr = (float) sampleRate;
+    const float durationSec = 0.5f + rng.nextFloat() * 0.2f;
+    const int n = juce::jmax (1, (int) (durationSec * sr));
+    juce::AudioBuffer<float> buffer (2, n);
+
+    const float fundamental = 200.0f + rng.nextFloat() * 80.0f;
+    static constexpr std::array<float, 6> harmonicRatio { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f };
+    std::array<float, 6> phases {};
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = (float) i / sr;
+        float mix = 0.0f;
+        for (size_t k = 0; k < harmonicRatio.size(); ++k)
+        {
+            // Higher harmonics decay faster - the classic plucked/bowed-string cue.
+            const float decay = 0.35f / (float) (k + 1);
+            const float level = envelope (t, 0.003f, decay, 1.6f) / (float) (k + 1);
+            mix += std::sin (phases[k]) * level;
+            phases[k] += juce::MathConstants<float>::twoPi * fundamental * harmonicRatio[k] / sr;
+        }
+        buffer.setSample (0, i, mix);
+        buffer.setSample (1, i, mix);
+    }
+
+    normalise (buffer);
+    return buffer;
+}
+
+juce::AudioBuffer<float> renderPluck (double sampleRate, juce::uint32 seed)
+{
+    // Karplus-Strong: a short noise burst circulates through a delay line sized
+    // to the target pitch, low-passed each pass so it decays into a plucked tone.
+    juce::Random rng (seed);
+    const auto sr = (float) sampleRate;
+    const float freq = 220.0f + rng.nextFloat() * 220.0f;
+    const float durationSec = 0.6f + rng.nextFloat() * 0.2f;
+    const int n = juce::jmax (1, (int) (durationSec * sr));
+    const int delayLen = juce::jmax (2, (int) std::lround (sr / freq));
+    std::vector<float> line ((size_t) delayLen);
+    for (auto& s : line) s = noiseSample (rng);
+
+    juce::AudioBuffer<float> buffer (2, n);
+    int idx = 0;
+    float prev = 0.0f;
+    const float damping = 0.996f - rng.nextFloat() * 0.003f;
+    for (int i = 0; i < n; ++i)
+    {
+        const float current = line[(size_t) idx];
+        const float next = (current + prev) * 0.5f * damping;
+        line[(size_t) idx] = next;
+        prev = next;
+        idx = (idx + 1) % delayLen;
+        buffer.setSample (0, i, current);
+        buffer.setSample (1, i, current);
+    }
+
+    normalise (buffer);
+    return buffer;
+}
+
+juce::AudioBuffer<float> renderRimshot (double sampleRate, juce::uint32 seed)
+{
+    juce::Random rng (seed);
+    const auto sr = (float) sampleRate;
+    const float durationSec = 0.09f + rng.nextFloat() * 0.04f;
+    const int n = juce::jmax (1, (int) (durationSec * sr));
+    juce::AudioBuffer<float> buffer (2, n);
+
+    const float tockFreq = 900.0f + rng.nextFloat() * 300.0f;
+    float phase = 0.0f;
+    OnePole tone; tone.setCutoff (3500.0f + rng.nextFloat() * 800.0f, sr);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = (float) i / sr;
+        const float clickEnv = envelope (t, 0.0001f, 0.006f, 10.0f);
+        const float tockEnv = envelope (t, 0.0001f, 0.03f, 6.0f);
+        phase += juce::MathConstants<float>::twoPi * tockFreq / sr;
+
+        const float click = tone.lowpass (noiseSample (rng)) * clickEnv * 0.9f;
+        const float tock = std::sin (phase) * tockEnv * 0.6f;
+        const float sample = click + tock;
+        buffer.setSample (0, i, sample);
+        buffer.setSample (1, i, sample);
+    }
+
+    normalise (buffer);
+    return buffer;
+}
+
+juce::AudioBuffer<float> renderTriangle (double sampleRate, juce::uint32 seed)
+{
+    juce::Random rng (seed);
+    const auto sr = (float) sampleRate;
+    const float durationSec = 0.9f + rng.nextFloat() * 0.3f;
+    const int n = juce::jmax (1, (int) (durationSec * sr));
+    juce::AudioBuffer<float> buffer (2, n);
+
+    // The orchestral triangle: a bright fundamental plus a few inharmonic
+    // partials (non-integer ratios), ringing out slowly.
+    const float fundamental = 2600.0f + rng.nextFloat() * 600.0f;
+    static constexpr std::array<float, 4> ratio { 1.0f, 2.76f, 4.18f, 5.63f };
+    static constexpr std::array<float, 4> level { 1.0f, 0.5f, 0.32f, 0.2f };
+    std::array<float, 4> phases {};
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = (float) i / sr;
+        const float env = envelope (t, 0.0004f, 0.65f, 1.1f);
+        float mix = 0.0f;
+        for (size_t k = 0; k < ratio.size(); ++k)
+        {
+            mix += std::sin (phases[k]) * level[k];
+            phases[k] += juce::MathConstants<float>::twoPi * fundamental * ratio[k] / sr;
+        }
+        const float sample = mix * env * 0.3f;
+        buffer.setSample (0, i, sample);
+        buffer.setSample (1, i, sample);
+    }
+
+    normalise (buffer);
+    return buffer;
+}
+
+juce::AudioBuffer<float> renderTuba (double sampleRate, juce::uint32 seed)
+{
+    juce::Random rng (seed);
+    const auto sr = (float) sampleRate;
+    const float durationSec = 0.55f + rng.nextFloat() * 0.2f;
+    const int n = juce::jmax (1, (int) (durationSec * sr));
+    juce::AudioBuffer<float> buffer (2, n);
+
+    const float fundamental = 55.0f + rng.nextFloat() * 20.0f;
+    static constexpr std::array<float, 4> harmonicRatio { 1.0f, 2.0f, 3.0f, 4.0f };
+    static constexpr std::array<float, 4> harmonicLevel { 1.0f, 0.45f, 0.25f, 0.12f };
+    std::array<float, 4> phases {};
+    OnePole tone; tone.setCutoff (900.0f, sr);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = (float) i / sr;
+        const float env = envelope (t, 0.02f, 0.35f, 2.0f);
+        float mix = 0.0f;
+        for (size_t k = 0; k < harmonicRatio.size(); ++k)
+        {
+            mix += std::sin (phases[k]) * harmonicLevel[k];
+            phases[k] += juce::MathConstants<float>::twoPi * fundamental * harmonicRatio[k] / sr;
+        }
+        const float sample = tone.lowpass (mix) * env * 0.5f;
+        buffer.setSample (0, i, sample);
+        buffer.setSample (1, i, sample);
+    }
+
+    normalise (buffer);
+    return buffer;
+}
 }
 
 juce::AudioBuffer<float> generateSample (GeneratedSampleType type, double sampleRate, juce::uint32 seed) noexcept
 {
     switch (type)
     {
-        case GeneratedSampleType::snare: return renderSnare (sampleRate, seed);
-        case GeneratedSampleType::hat:   return renderHat   (sampleRate, seed);
-        case GeneratedSampleType::clap:  return renderClap  (sampleRate, seed);
+        case GeneratedSampleType::snare:    return renderSnare    (sampleRate, seed);
+        case GeneratedSampleType::hat:      return renderHat      (sampleRate, seed);
+        case GeneratedSampleType::clap:     return renderClap     (sampleRate, seed);
+        case GeneratedSampleType::bassDrum: return renderBassDrum (sampleRate, seed);
+        case GeneratedSampleType::horn:     return renderHorn     (sampleRate, seed);
+        case GeneratedSampleType::string:   return renderString   (sampleRate, seed);
+        case GeneratedSampleType::pluck:    return renderPluck    (sampleRate, seed);
+        case GeneratedSampleType::rimshot:  return renderRimshot  (sampleRate, seed);
+        case GeneratedSampleType::triangle: return renderTriangle (sampleRate, seed);
+        case GeneratedSampleType::tuba:     return renderTuba     (sampleRate, seed);
     }
     return renderSnare (sampleRate, seed);
 }
@@ -178,9 +411,16 @@ const char* generatedSampleName (GeneratedSampleType type) noexcept
 {
     switch (type)
     {
-        case GeneratedSampleType::snare: return "Generated Snare";
-        case GeneratedSampleType::hat:   return "Generated Hat";
-        case GeneratedSampleType::clap:  return "Generated Clap";
+        case GeneratedSampleType::snare:    return "Generated Snare";
+        case GeneratedSampleType::hat:      return "Generated Hat";
+        case GeneratedSampleType::clap:     return "Generated Clap";
+        case GeneratedSampleType::bassDrum: return "Generated Bass Drum";
+        case GeneratedSampleType::horn:     return "Generated Horn";
+        case GeneratedSampleType::string:   return "Generated String";
+        case GeneratedSampleType::pluck:    return "Generated Pluck";
+        case GeneratedSampleType::rimshot:  return "Generated Rimshot";
+        case GeneratedSampleType::triangle: return "Generated Triangle";
+        case GeneratedSampleType::tuba:     return "Generated Tuba";
     }
     return "Generated Sample";
 }
