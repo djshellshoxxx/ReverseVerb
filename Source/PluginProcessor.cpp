@@ -146,7 +146,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::sep,   "Separation", R { 0.0f, 1.0f, 0.001f }, 0.4f);
     add (IDs::width, "Width",  R { 0.0f, 1.0f, 0.001f }, 1.0f);
     add (IDs::gap,   "Delay",  R { 0.0f, 500.0f, 1.0f }, 0.0f, "ms");
-    add (IDs::tail,  "Length", R { 0.1f, 64.0f, 0.01f, 0.3f }, 1.2f, "s");
+    add (IDs::tail,  "Length", R { 0.1f, 180.0f, 0.01f, 0.3f }, 1.2f, "s");
     add (IDs::shape, "Shape",  R { -1.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::tone,  "Color",  R { 500.0f, 20000.0f, 1.0f, 0.3f }, 20000.0f, "Hz");
     add (IDs::basscut, "Bass Cut", R { 20.0f, 2000.0f, 1.0f, 0.3f }, 20.0f, "Hz");
@@ -344,21 +344,6 @@ void ReverseVerbProcessor::resetEdits()
     setParam (IDs::pitch, 0.0f);      setParam (IDs::pitchTension, 0.0f);
     setParam (IDs::transpose, 0.0f);
     setParam (IDs::volStart, 1.0f);   setParam (IDs::volEnd, 1.0f);  setParam (IDs::volTension, 0.0f);
-
-    // Also restore the gator to its known-good factory configuration. This is
-    // the reliable way back to a working state no matter what got it stuck
-    // (an emptied pattern, an extreme rate/swing combination, etc).
-    setParam (IDs::gateEnabled, 0.0f);
-    setParam (IDs::gateSteps, 0.0f);
-    setParam (IDs::gateRate, 7.0f);
-    setParam (IDs::gateDepth, 1.0f);
-    setParam (IDs::gateSmooth, 3.0f);
-    setParam (IDs::gateSwing, 0.0f);
-    setParam (IDs::gatePhase, 0.0f);
-    setParam (IDs::gateRetrigger, 0.0f);
-    setParam (IDs::gateTarget, 0.0f);
-    setParam (IDs::gateShape, 0.0f);
-    replaceGatePattern (rv::GatePattern {}, "Reset edits");
     stopAll(); // silence any currently-playing preview so the reset is heard cleanly on the next trigger
 }
 

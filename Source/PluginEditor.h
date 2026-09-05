@@ -66,6 +66,7 @@ private:
     juce::Path swellPath, hitPath;
     int total = 0, hitIndex = -1, lastPlayhead = -2;
     float lastTone = -1, lastBass = -1, lastV0 = -1, lastV1 = -1, lastVT = -9;
+    double lastBpm = -1.0;
     Drag drag = Drag::none, hover = Drag::none;
     juce::Point<float> downPos;
     float downA = 0, downB = 0, downSpan = 1;

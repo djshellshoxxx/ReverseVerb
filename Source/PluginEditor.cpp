@@ -298,6 +298,8 @@ void WaveformDisplay::timerCallback()
     const float tone = proc.param (IDs::tone), bass = proc.param (IDs::basscut);
     const float v0 = proc.param (IDs::volStart), v1 = proc.param (IDs::volEnd), vt = proc.param (IDs::volTension);
     if (tone != lastTone || bass != lastBass || v0 != lastV0 || v1 != lastV1 || vt != lastVT) { lastTone = tone; lastBass = bass; lastV0 = v0; lastV1 = v1; lastVT = vt; dirty = true; }
+    const double bpm = proc.getHostBpm();
+    if (std::abs (bpm - lastBpm) > 0.001) { lastBpm = bpm; dirty = true; }
     if (dirty) repaint();
 }
 
@@ -684,7 +686,7 @@ WORKFLOW
   EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
   RISE puts reversed reverb before the hit. FALL puts the dry hit first and plays the forward reverb decay after the selected DELAY.
   Hit on note (PDC): in RISE, reports the dry-hit offset as latency so the hit lands exactly on the note. FALL needs no lookahead, so PDC is disabled.
-  RESET EDITS clears trim, pitch and volume envelope. RANDOM rolls new reverb settings.
+  RESET EDITS clears trim, pitch, transpose and volume envelope (leaves the gator untouched). RANDOM rolls new reverb settings.
 
 WAVEFORM
   Colour follows the COLOR knob (violet = dark, cyan = bright) and turns red as BASS CUT rises.
@@ -704,8 +706,8 @@ SWELL
   COLOR: low-pass filter on the swell.  BASS CUT: high-pass filter on the swell, keeps sub out of your break.
 
 SYNC
-  SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-16 bar lengths from 1/64T upward.
-  With SYNC off, the free LENGTH knob stretches the tail up to 64 seconds.
+  SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-64 bar lengths from 1/64T upward.
+  With SYNC off, the free LENGTH knob stretches the tail up to 3 minutes for long, drawn-out rises and falls.
   TEMPO: HOST BPM follows the DAW's tempo. Turn it off to set your own BPM with the knob next to it (also used by Standalone, or to deliberately decouple from the host).
 
 PITCH
@@ -721,7 +723,6 @@ GATOR
   NOTE restarts the pattern for every hit. HOST locks it to the DAW PPQ timeline and falls back to NOTE when the host supplies no PPQ.
   TARGET gates the SWELL, HIT, or BOTH layers. SHAPE chooses Square, Smooth, Ramp Up/Down, Triangle, Sine, or Curved movement inside each step.
   CLEAR, FILL, INVERT, RANDOM, rotate, COPY/PASTE, and UNDO/REDO edit the pattern without interrupting audio.
-  If the gator ever seems stuck, RESET EDITS restores it (and every edit) to a known-working state.
 
 MIDI LEARN
   Right-click any knob, toggle, or dropdown for "MIDI Learn", then move a control on your MIDI keyboard/controller to map it - this works in every host and in Standalone, since it doesn't depend on host support.
@@ -1145,7 +1146,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     nextButton.onClick   = [this] { proc.nextSample(); };
     playButton.onClick   = [this] { proc.triggerPreview(); };
     resetButton.onClick  = [this] { proc.resetEdits(); };
-    resetButton.setTooltip ("Clears trim, pitch, transpose and the volume envelope, and restores the gator to its factory-default, known-good state.");
+    resetButton.setTooltip ("Clears trim, pitch, transpose and the volume envelope. Does not touch the gator.");
     randomButton.onClick = [this] { proc.randomizeReverb(); };
     helpButton.onClick   = [this] { help.setVisible (true); help.toFront (true); };
     gateClear.onClick = [this] { proc.clearGatePattern(); };

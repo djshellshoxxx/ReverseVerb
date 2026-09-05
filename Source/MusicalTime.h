@@ -60,6 +60,8 @@ enum class Division : std::uint8_t
     fourBars,
     eightBars,
     sixteenBars,
+    thirtyTwoBars,
+    sixtyFourBars,
     count
 };
 
@@ -89,6 +91,8 @@ inline constexpr std::array<Division, static_cast<std::size_t> (Division::count)
     Division::fourBars,
     Division::eightBars,
     Division::sixteenBars,
+    Division::thirtyTwoBars,
+    Division::sixtyFourBars,
 };
 
 [[nodiscard]] std::string_view divisionLabel (Division division) noexcept;

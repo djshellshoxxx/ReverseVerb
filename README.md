@@ -8,8 +8,8 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 
 - Rise/Fall direction engine with direction-aware Delay and waveform placement
 - Rise-mode plugin delay compensation (PDC) so the dry hit can land on the MIDI note; Fall reports zero lookahead
-- Fine sync divisions from 1/64 triplet through sixteen bars, including straight, triplet, and dotted values
-- A free (unsynced) Length knob that stretches the tail up to 64 seconds
+- Fine sync divisions from 1/64 triplet through sixty-four bars, including straight, triplet, and dotted values
+- A free (unsynced) Length knob that stretches the tail up to 3 minutes, for long, drawn-out rises and falls
 - Time-signature-aware bars and waveform grids using the host BPM and meter
 - BPM can follow the host or be set manually with the HOST BPM toggle and BPM knob (useful in Standalone or to deliberately decouple from the host)
 - Transpose knob shifts the pitch of the whole rendered hit and tail by a fixed amount, independent of the existing pitch sweep
