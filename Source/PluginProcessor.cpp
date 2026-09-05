@@ -146,7 +146,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::sep,   "Separation", R { 0.0f, 1.0f, 0.001f }, 0.4f);
     add (IDs::width, "Width",  R { 0.0f, 1.0f, 0.001f }, 1.0f);
     add (IDs::gap,   "Delay",  R { 0.0f, 500.0f, 1.0f }, 0.0f, "ms");
-    add (IDs::tail,  "Length", R { 0.1f, 8.0f, 0.01f, 0.5f }, 1.2f, "s");
+    add (IDs::tail,  "Length", R { 0.1f, 64.0f, 0.01f, 0.3f }, 1.2f, "s");
     add (IDs::shape, "Shape",  R { -1.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::tone,  "Color",  R { 500.0f, 20000.0f, 1.0f, 0.3f }, 20000.0f, "Hz");
     add (IDs::basscut, "Bass Cut", R { 20.0f, 2000.0f, 1.0f, 0.3f }, 20.0f, "Hz");
@@ -728,7 +728,12 @@ void ReverseVerbProcessor::render()
             for (auto& samples : wetSamples) samples.reserve ((size_t) trimLen * 2);
             for (auto& samples : drySamples) samples.reserve ((size_t) trimLen * 2);
             double p = 0.0;
-            while (p < trimLen - 1 && semiPerSample.size() < (size_t) (sr * 60.0))
+            // Pitching down stretches the timeline (up to ~16x at -4 octaves), so the cap
+            // must scale with trimLen rather than a fixed duration or long/slow renders get
+            // truncated. An absolute ceiling still guards against runaway memory use.
+            const auto sampleCap = (size_t) juce::jmin<juce::int64> ((juce::int64) trimLen * 20 + 8,
+                                                                     (juce::int64) (sr * 600.0));
+            while (p < trimLen - 1 && semiPerSample.size() < sampleCap)
             {
                 const int i0 = (int) p; const float frac = (float) (p - i0);
                 for (int ch = 0; ch < 2; ++ch)
@@ -841,10 +846,34 @@ bool ReverseVerbProcessor::loadSampleFile (const juce::File& f, bool previewAfte
     reader->read (&buf, 0, len, 0, true, true);
     { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = reader->sampleRate; }
     currentFile = f;
+    generatedLabel.clear();
     refreshFolderList (f);
     if (previewAfter) previewAfterRender = true;
     dirty = true;
     return true;
+}
+
+bool ReverseVerbProcessor::generateSample (rv::GeneratedSampleType type)
+{
+    const auto sr = hostSampleRate.load();
+    const double sampleRate = sr > 0.0 ? sr : 44100.0;
+    const auto seed = (juce::uint32) juce::Random::getSystemRandom().nextInt();
+    auto buf = rv::generateSample (type, sampleRate, seed);
+    if (buf.getNumSamples() <= 0) return false;
+    { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = sampleRate; }
+    currentFile = juce::File();
+    folderFiles.clear();
+    currentIndex = -1;
+    generatedLabel = rv::generatedSampleName (type);
+    previewAfterRender = true;
+    dirty = true;
+    return true;
+}
+
+juce::String ReverseVerbProcessor::getDisplayLabel() const
+{
+    if (generatedLabel.isNotEmpty()) return generatedLabel;
+    return currentFile.existsAsFile() ? currentFile.getFileName() : juce::String();
 }
 
 void ReverseVerbProcessor::nextSample()

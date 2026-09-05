@@ -57,6 +57,7 @@ Ratio noteRatio (Division division) noexcept
         case Division::twoBars:
         case Division::fourBars:
         case Division::eightBars:
+        case Division::sixteenBars:
         case Division::count:
             break;
     }
@@ -68,11 +69,12 @@ int barCount (Division division) noexcept
 {
     switch (division)
     {
-        case Division::oneBar:   return 1;
-        case Division::twoBars:  return 2;
-        case Division::fourBars: return 4;
-        case Division::eightBars:return 8;
-        default:                 return 0;
+        case Division::oneBar:     return 1;
+        case Division::twoBars:    return 2;
+        case Division::fourBars:   return 4;
+        case Division::eightBars:  return 8;
+        case Division::sixteenBars:return 16;
+        default:                   return 0;
     }
 }
 }
@@ -105,6 +107,7 @@ std::string_view divisionLabel (Division division) noexcept
         case Division::twoBars:             return "2 bars";
         case Division::fourBars:            return "4 bars";
         case Division::eightBars:           return "8 bars";
+        case Division::sixteenBars:         return "16 bars";
         case Division::count:               break;
     }
 

@@ -13,6 +13,44 @@ juce::Colour RVColours::swellColour (float toneHz, float bassCutHz)
     return toneCol.interpolatedWith (red, nb * 0.9f);
 }
 
+// ---------------- Host parameter context menu ----------------
+//
+// Shared by every Host* control below plus the waveform's trim handles and the
+// pitch tension box, so any control bound to a host parameter can expose
+// whatever the host's own parameter context-menu extension provides (VST3
+// hosts that implement it may add commands such as "Create automation clip"),
+// plus a plain Reset to default.
+
+namespace
+{
+void showHostParameterMenu (juce::Component& target,
+                            juce::AudioProcessorEditor* editor,
+                            juce::AudioProcessorParameter* parameter)
+{
+    juce::PopupMenu menu;
+
+    if (editor != nullptr && parameter != nullptr)
+        if (auto* hostContext = editor->getHostContext())
+            if (auto hostMenu = hostContext->getContextMenuForParameter (parameter))
+                menu = hostMenu->getEquivalentPopupMenu();
+
+    if (menu.getNumItems() > 0)
+        menu.addSeparator();
+
+    menu.addItem ("Reset to default", parameter != nullptr, false,
+                  [safeTarget = juce::Component::SafePointer<juce::Component> (&target), parameter]
+                  {
+                      if (safeTarget == nullptr || parameter == nullptr)
+                          return;
+
+                      parameter->beginChangeGesture();
+                      parameter->setValueNotifyingHost (parameter->getDefaultValue());
+                      parameter->endChangeGesture();
+                  });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target).withMousePosition());
+}
+}
+
 // ---------------- Look and feel ----------------
 
 RVLookAndFeel::RVLookAndFeel()
@@ -438,7 +476,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.drawText (right, getWidth() / 2, by, getWidth() / 2 - 12, bh, juce::Justification::centredRight);
     g.setFont (juce::Font (juce::FontOptions (9.5f)));
     g.setColour (textDim.withAlpha (0.7f));
-    g.drawText ("click = play    drag = trim    dots = volume", 0, 2, getWidth(), 12, juce::Justification::centred);
+    g.drawText ("click = play    drag = trim    dots = volume    right-click = automation", 0, 2, getWidth(), 12, juce::Justification::centred);
 }
 
 void WaveformDisplay::mouseMove (const juce::MouseEvent& e)
@@ -460,9 +498,32 @@ void WaveformDisplay::mouseMove (const juce::MouseEvent& e)
                     : (h == Drag::none ? juce::MouseCursor::NormalCursor : juce::MouseCursor::LeftRightResizeCursor));
 }
 
+const juce::String* WaveformDisplay::paramIdFor (Drag d) const noexcept
+{
+    switch (d)
+    {
+        case Drag::trimStart:  return &IDs::trimStart;
+        case Drag::trimEnd:    return &IDs::trimEnd;
+        case Drag::volStart:   return &IDs::volStart;
+        case Drag::volEnd:     return &IDs::volEnd;
+        case Drag::volTension: return &IDs::volTension;
+        case Drag::none:       break;
+    }
+    return nullptr;
+}
+
 void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 {
     mouseMove (e);
+    if (e.mods.isPopupMenu())
+    {
+        if (const auto* paramId = paramIdFor (hover))
+            if (auto* parameter = proc.apvts.getParameter (*paramId))
+            {
+                showHostParameterMenu (*this, editor, parameter);
+                return;
+            }
+    }
     drag = hover;
     moved = false;
     downPos = e.position;
@@ -476,7 +537,7 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
         default: break;
     }
     downSpan = juce::jmax (0.01f, std::abs (downB - downA));
-    if (e.mods.isRightButtonDown() || e.getNumberOfClicks() > 1)
+    if (e.getNumberOfClicks() > 1)
     {
         if (drag == Drag::volStart) proc.setParam (IDs::volStart, 1.0f);
         if (drag == Drag::volEnd) proc.setParam (IDs::volEnd, 1.0f);
@@ -512,6 +573,20 @@ void WaveformDisplay::mouseUp (const juce::MouseEvent&)
 }
 
 // ---------------- Tension box ----------------
+
+void TensionBox::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        if (auto* parameter = proc.apvts.getParameter (paramId))
+        {
+            showHostParameterMenu (*this, editor, parameter);
+            return;
+        }
+    }
+    downT = proc.param (paramId);
+    downY = e.y;
+}
 
 void TensionBox::paint (juce::Graphics& g)
 {
@@ -583,8 +658,10 @@ static const char* kHelpText = R"(REVERSE VERB - what everything does
 
 WORKFLOW
   LOAD (or drop a file on the window) picks a hit. < > steps through every sample in that folder and auto-plays it with your current settings.
+  GENERATE: SNARE / HAT / CLAP synthesizes a fresh one-shot instead of browsing for one; click again for a new variation.
   Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.
-  Right-click a knob for host automation commands (when the DAW provides them) and Reset to default.
+  Right-click any knob, toggle, dropdown, waveform trim handle, or the pitch CURVE box for host automation commands
+  (when the DAW provides them) and Reset to default.
   EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
   RISE puts reversed reverb before the hit. FALL puts the dry hit first and plays the forward reverb decay after the selected DELAY.
   Hit on note (PDC): in RISE, reports the dry-hit offset as latency so the hit lands exactly on the note. FALL needs no lookahead, so PDC is disabled.
@@ -608,7 +685,8 @@ SWELL
   COLOR: low-pass filter on the swell.  BASS CUT: high-pass filter on the swell, keeps sub out of your break.
 
 SYNC
-  SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-8 bar lengths from 1/64T upward.
+  SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-16 bar lengths from 1/64T upward.
+  With SYNC off, the free LENGTH knob stretches the tail up to 64 seconds.
 
 PITCH
   PITCH sweeps the pitch from 0 at the start to the knob amount at the end. Range chooses 1, 2 or 4 octaves. CURVE box: drag up/down to change how fast the sweep happens.
@@ -653,38 +731,6 @@ void HelpOverlay::resized()
     closeButton.setBounds (r.removeFromBottom (30).withSizeKeepingCentre (100, 30));
     r.removeFromBottom (10);
     body.setBounds (r);
-}
-
-// ---------------- Host parameter context menu ----------------
-
-namespace
-{
-void showHostParameterMenu (juce::Component& target,
-                            juce::AudioProcessorEditor* editor,
-                            juce::AudioProcessorParameter* parameter)
-{
-    juce::PopupMenu menu;
-
-    if (editor != nullptr && parameter != nullptr)
-        if (auto* hostContext = editor->getHostContext())
-            if (auto hostMenu = hostContext->getContextMenuForParameter (parameter))
-                menu = hostMenu->getEquivalentPopupMenu();
-
-    if (menu.getNumItems() > 0)
-        menu.addSeparator();
-
-    menu.addItem ("Reset to default", parameter != nullptr, false,
-                  [safeTarget = juce::Component::SafePointer<juce::Component> (&target), parameter]
-                  {
-                      if (safeTarget == nullptr || parameter == nullptr)
-                          return;
-
-                      parameter->beginChangeGesture();
-                      parameter->setValueNotifyingHost (parameter->getDefaultValue());
-                      parameter->endChangeGesture();
-                  });
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target).withMousePosition());
-}
 }
 
 void HostContextSlider::setHostParameter (juce::AudioProcessorEditor& owner,
@@ -877,6 +923,8 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
       gatePatternEditor (p)
 {
     setLookAndFeel (&lnf);
+    waveform.setEditor (*this);
+    pitchTension.setEditor (*this);
 
     title.setText ("REVERSE VERB", juce::dontSendNotification);
     title.setFont (juce::Font (juce::FontOptions (24.0f, juce::Font::bold)));
@@ -896,8 +944,13 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     countLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (countLabel);
 
-    for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &helpButton })
+    for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &helpButton,
+                     &generateSnareButton, &generateHatButton, &generateClapButton })
         addAndMakeVisible (b);
+    generateLabel.setText ("GENERATE", juce::dontSendNotification);
+    generateLabel.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+    generateLabel.setColour (juce::Label::textColourId, textDim);
+    addAndMakeVisible (generateLabel);
     for (auto* t : { &alignToggle, &syncToggle }) addAndMakeVisible (t);
     addAndMakeVisible (waveform);
     addAndMakeVisible (shape);
@@ -918,6 +971,12 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     }
     rangeCombo.addItemList ({ "1 oct", "2 oct", "4 oct" }, 1);
     directionCombo.addItemList ({ "RISE", "FALL" }, 1);
+    syncCombo.setTitle ("Sync length");
+    syncCombo.setTooltip ("Tempo-locked total length, from 1/64T up to 16 bars. Right-click for host automation.");
+    rangeCombo.setTitle ("Pitch range");
+    rangeCombo.setTooltip ("Octave range for the PITCH knob. Right-click for host automation.");
+    syncToggle.setTooltip ("Lock the total length to host tempo instead of the free LENGTH knob. Right-click for host automation.");
+    pitchTension.setTooltip ("Pitch sweep tension curve. Right-click for host automation.");
     addAndMakeVisible (syncCombo);
     addAndMakeVisible (rangeCombo);
     addAndMakeVisible (directionCombo);
@@ -926,6 +985,14 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     directionAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::direction, directionCombo);
     alignAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
     syncAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync, syncToggle);
+    for (const auto& binding : std::initializer_list<std::pair<HostContextComboBox*, const juce::String*>> {
+             { &syncCombo, &IDs::syncDivisionV2 }, { &rangeCombo, &IDs::pitchRange } })
+        if (auto* parameter = proc.apvts.getParameter (*binding.second))
+            binding.first->setHostParameter (*this, *parameter);
+    for (const auto& binding : std::initializer_list<std::pair<HostContextToggleButton*, const juce::String*>> {
+             { &alignToggle, &IDs::align }, { &syncToggle, &IDs::sync } })
+        if (auto* parameter = proc.apvts.getParameter (*binding.second))
+            binding.first->setHostParameter (*this, *parameter);
 
     gateStepsCombo.addItemList ({ "16", "32" }, 1);
     for (const auto division : rv::gateRateDivisions)
@@ -1022,6 +1089,13 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
             proc.refreshGatePatternFromState();
     };
 
+    generateSnareButton.onClick = [this] { proc.generateSample (rv::GeneratedSampleType::snare); };
+    generateHatButton.onClick   = [this] { proc.generateSample (rv::GeneratedSampleType::hat); };
+    generateClapButton.onClick  = [this] { proc.generateSample (rv::GeneratedSampleType::clap); };
+    generateSnareButton.setTooltip ("Synthesize a new snare one-shot to feed the Rise/Fall engine.");
+    generateHatButton.setTooltip ("Synthesize a new hi-hat one-shot to feed the Rise/Fall engine.");
+    generateClapButton.setTooltip ("Synthesize a new clap one-shot to feed the Rise/Fall engine.");
+
     loadButton.onClick = [this]
     {
         auto start = proc.getCurrentFile().existsAsFile() ? proc.getCurrentFile().getParentDirectory()
@@ -1056,8 +1130,8 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
 
     addChildComponent (help);
     setResizable (true, true);
-    setResizeLimits (1060, 860, 1600, 1200);
-    setSize (1180, 920);
+    setResizeLimits (1060, 894, 1600, 1234);
+    setSize (1180, 954);
     startTimerHz (10);
     timerCallback();
 }
@@ -1089,8 +1163,8 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
 
 void ReverseVerbEditor::timerCallback()
 {
-    auto f = proc.getCurrentFile();
-    fileLabel.setText (f.existsAsFile() ? f.getFileName() : "no sample loaded", juce::dontSendNotification);
+    const auto displayLabel = proc.getDisplayLabel();
+    fileLabel.setText (displayLabel.isNotEmpty() ? displayLabel : "no sample loaded", juce::dontSendNotification);
     const int n = proc.getSampleCount();
     countLabel.setText (n > 0 ? juce::String (proc.getSampleIndex() + 1) + " / " + juce::String (n) : "", juce::dontSendNotification);
     const bool sync = proc.param (IDs::sync) > 0.5f;
@@ -1172,6 +1246,15 @@ void ReverseVerbEditor::resized()
     browser.removeFromRight (8);
     countLabel.setBounds (browser.removeFromRight (56));
     fileLabel.setBounds (browser.reduced (0, 7));
+
+    // sample generator row (an alternative to LOAD: synthesize a hit instead of browsing for one)
+    area.removeFromTop (8);
+    auto genRow = area.removeFromTop (26);
+    generateLabel.setBounds (genRow.removeFromLeft (72));
+    genRow.removeFromLeft (6);
+    generateSnareButton.setBounds (genRow.removeFromLeft (64)); genRow.removeFromLeft (6);
+    generateHatButton.setBounds (genRow.removeFromLeft (64));   genRow.removeFromLeft (6);
+    generateClapButton.setBounds (genRow.removeFromLeft (64));
 
     // shape + waveform
     area.removeFromTop (10);

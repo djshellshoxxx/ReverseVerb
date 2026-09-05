@@ -5,6 +5,7 @@
 #include "GatedMixer.h"
 #include "MusicalTime.h"
 #include "RenderedSample.h"
+#include "SampleGenerator.h"
 
 namespace IDs
 {
@@ -69,6 +70,9 @@ public:
     int getSampleIndex() const { return currentIndex; }
     int getSampleCount() const { return folderFiles.size(); }
 
+    bool generateSample (rv::GeneratedSampleType type);
+    juce::String getDisplayLabel() const;
+
     void triggerPreview() { triggerRequest = 1; }
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
@@ -128,6 +132,7 @@ private:
     juce::File currentFile;
     juce::Array<juce::File> folderFiles;
     int currentIndex = -1;
+    juce::String generatedLabel;
 
     std::shared_ptr<const RenderedSample> rendered;
     std::shared_ptr<const rv::GatePattern> gatePattern;

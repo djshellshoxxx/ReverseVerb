@@ -52,13 +52,16 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void setEditor (juce::AudioProcessorEditor& e) noexcept { editor = &e; }
 private:
     enum class Drag { none, trimEnd, trimStart, volStart, volEnd, volTension };
     void timerCallback() override;
     void rebuild();
     juce::Rectangle<float> plot() const;
     float volY (float level) const;
+    const juce::String* paramIdFor (Drag) const noexcept;
     ReverseVerbProcessor& proc;
+    juce::AudioProcessorEditor* editor = nullptr;
     std::shared_ptr<const RenderedSample> cached;
     juce::Path swellPath, hitPath;
     int total = 0, hitIndex = -1, lastPlayhead = -2;
@@ -69,15 +72,17 @@ private:
     bool moved = false;
 };
 
-class TensionBox : public juce::Component, private juce::Timer
+class TensionBox : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
     TensionBox (ReverseVerbProcessor& p, const juce::String& id) : proc (p), paramId (id) { startTimerHz (15); }
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent& e) override { downT = proc.param (paramId); downY = e.y; }
+    void mouseDown (const juce::MouseEvent& e) override;
     void mouseDrag (const juce::MouseEvent& e) override { proc.setParam (paramId, juce::jlimit (-1.0f, 1.0f, downT + (float) (downY - e.y) / 60.0f)); repaint(); }
     void mouseDoubleClick (const juce::MouseEvent&) override { proc.setParam (paramId, 0.0f); repaint(); }
+    void setEditor (juce::AudioProcessorEditor& e) noexcept { editor = &e; }
 private:
+    juce::AudioProcessorEditor* editor = nullptr;
     void timerCallback() override { const float t = proc.param (paramId); if (t != shown) { shown = t; repaint(); } }
     ReverseVerbProcessor& proc;
     juce::String paramId;
@@ -201,9 +206,11 @@ private:
     juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
-    juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
+    juce::Label generateLabel;
+    juce::TextButton generateSnareButton { "SNARE" }, generateHatButton { "HAT" }, generateClapButton { "CLAP" };
+    HostContextToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
     HostContextToggleButton gateToggle { "GATOR" };
-    juce::ComboBox syncCombo, rangeCombo;
+    HostContextComboBox syncCombo, rangeCombo;
     HostContextComboBox directionCombo, gateStepsCombo, gateRateCombo, gateRetriggerCombo, gateTargetCombo, gateShapeCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt,

@@ -8,8 +8,10 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 
 - Rise/Fall direction engine with direction-aware Delay and waveform placement
 - Rise-mode plugin delay compensation (PDC) so the dry hit can land on the MIDI note; Fall reports zero lookahead
-- Fine sync divisions from 1/64 triplet through eight bars, including straight, triplet, and dotted values
+- Fine sync divisions from 1/64 triplet through sixteen bars, including straight, triplet, and dotted values
+- A free (unsynced) Length knob that stretches the tail up to 64 seconds
 - Time-signature-aware bars and waveform grids using the host BPM and meter
+- Built-in sample generator: synthesize a snare, hi-hat, or clap one-shot to feed straight into the Rise/Fall engine
 - 16/32-step tempo-synced gator with variable step levels
 - Seven gate shapes: Square, Smooth, Ramp Up, Ramp Down, Triangle, Sine, and Curved
 - Gate Depth, Smooth, Swing, Phase, Note/Host retrigger, and Swell/Hit/Both targeting
@@ -30,7 +32,7 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 - Sync total length to the host BPM and time signature, with musical grid lines on the waveform
 - Hit on note (PDC) so the dry hit lands exactly on the MIDI note
 - Live readout of time, pitch and volume during playback
-- Host-aware knob menus: right-click a parameter for DAW automation commands where supported, plus Reset to default
+- Host-aware controls: right-click any knob, toggle, dropdown, waveform trim handle, or the pitch tension box for DAW automation commands where supported, plus Reset to default
 - Drag-to-DAW, WAV export, random reverb, built-in help (`?`)
 
 ## Reproducible developer build

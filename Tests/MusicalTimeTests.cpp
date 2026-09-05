@@ -82,6 +82,7 @@ private:
             expectNear (rv::quarterNotes (rv::Division::twoBars, c.signature), c.quarterNotesPerBar * 2.0);
             expectNear (rv::quarterNotes (rv::Division::fourBars, c.signature), c.quarterNotesPerBar * 4.0);
             expectNear (rv::quarterNotes (rv::Division::eightBars, c.signature), c.quarterNotesPerBar * 8.0);
+            expectNear (rv::quarterNotes (rv::Division::sixteenBars, c.signature), c.quarterNotesPerBar * 16.0);
         }
     }
 
