@@ -5,7 +5,7 @@
 
 namespace rv
 {
-juce::AudioBuffer<float> timeStretch (const juce::AudioBuffer<float>& source, double sampleRate, double ratio) noexcept
+juce::AudioBuffer<float> timeStretch (const juce::AudioBuffer<float>& source, double sampleRate, double ratio, int maxOutputSamples)
 {
     ratio = juce::jlimit (1.0, 64.0, ratio);
     const int numChannels = source.getNumChannels();
@@ -21,7 +21,10 @@ juce::AudioBuffer<float> timeStretch (const juce::AudioBuffer<float>& source, do
     const int synHop = juce::jmax (1, windowSize / 2);
     const double anaHop = (double) synHop / ratio;
 
-    const int dstLen = juce::jmax (1, (int) std::lround ((double) srcLen * ratio));
+    // Capped BEFORE allocating anything - an uncapped ratio*srcLen on a long
+    // source could otherwise attempt a multi-gigabyte allocation.
+    const int dstLen = juce::jlimit (1, juce::jmax (1, maxOutputSamples),
+                                     (int) std::lround ((double) srcLen * ratio));
     juce::AudioBuffer<float> dst (numChannels, dstLen + windowSize);
     dst.clear();
     std::vector<float> weight ((size_t) (dstLen + windowSize), 0.0f);

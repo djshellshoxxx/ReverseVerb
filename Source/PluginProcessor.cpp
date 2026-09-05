@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <new>
 
 // ---------------- Freeverb-style reverb with size / decay / damp / diffusion / separation / width / ER ----------------
 namespace
@@ -772,6 +773,7 @@ void ReverseVerbProcessor::render()
     out->timeSignatureDenominator = hostTiming.timeSignature.denominator;
 
     if (src.getNumSamples() > 0 && srcSR > 0)
+    try
     {
         // 1. resample hit to host rate, stereo
         const int srcLen = src.getNumSamples();
@@ -797,11 +799,20 @@ void ReverseVerbProcessor::render()
         const float stretchAmt = param (IDs::stretch);
         if (stretchAmt > 1.001f)
         {
-            hit = rv::timeStretch (hit, sr, (double) stretchAmt);
-            hitLen = juce::jmin (hit.getNumSamples(), (int) (sr * 300.0));
-            hit.setSize (2, hitLen, true, true, true);
-            const float stretchedMag = hit.getMagnitude (0, hitLen);
-            if (stretchedMag > 0.0f) hit.applyGain (0.9f / stretchedMag);
+            try
+            {
+                hit = rv::timeStretch (hit, sr, (double) stretchAmt, (int) (sr * 300.0));
+                hitLen = hit.getNumSamples();
+                const float stretchedMag = hit.getMagnitude (0, hitLen);
+                if (stretchedMag > 0.0f) hit.applyGain (0.9f / stretchedMag);
+            }
+            catch (const std::bad_alloc&)
+            {
+                // Extremely unlikely now that timeStretch caps its own output
+                // length before allocating, but if memory is genuinely this
+                // tight, fall back to the un-stretched hit rather than crash.
+                hit.setSize (2, hitLen, true, true, true);
+            }
         }
 
         // 2. tail length (free or synced to BPM)
@@ -1074,6 +1085,13 @@ void ReverseVerbProcessor::render()
         out->dryEnd = dryOutEnd;
         out->wetStart = wetOutStart;
         out->wetEnd = wetOutEnd;
+    }
+    catch (const std::bad_alloc&)
+    {
+        // An extreme combination of Stretch/Length/Sync at a high sample rate
+        // ran out of memory rendering this hit. Fall back to silence rather
+        // than crash the plugin and lose the user's whole session.
+        *out = RenderedSample {};
     }
 
     const int latency = latencySamplesFor (*out, param (IDs::align) > 0.5f);
