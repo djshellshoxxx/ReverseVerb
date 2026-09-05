@@ -1,5 +1,14 @@
 #pragma once
 #include <JuceHeader.h>
+#include "Envelope.h"
+#include "EnvelopeState.h"
+#include "GateEngine.h"
+#include "GatePatternState.h"
+#include "GatedMixer.h"
+#include "MusicalTime.h"
+#include "RenderedSample.h"
+#include "SampleGenerator.h"
+#include "PresetManager.h"
 
 namespace IDs
 {
@@ -8,9 +17,24 @@ namespace IDs
     static const juce::String tail = "tail", shape = "shape", tone = "tone", basscut = "basscut";
     static const juce::String align = "align";
     static const juce::String trimStart = "trimStart", trimEnd = "trimEnd";
-    static const juce::String sync = "sync", syncLen = "syncLen";
+    static const juce::String sync = "sync", syncLen = "syncLen", syncDivisionV2 = "syncDivisionV2";
+    static const juce::String direction = "direction";
     static const juce::String pitch = "pitch", pitchRange = "pitchRange", pitchTension = "pitchTension";
+    static const juce::String transpose = "transpose";
+    static const juce::String bpmSync = "bpmSync", manualBpm = "manualBpm";
     static const juce::String volStart = "volStart", volEnd = "volEnd", volTension = "volTension";
+    static const juce::String panStart = "panStart", panEnd = "panEnd", panTension = "panTension";
+    static const juce::String stretch = "stretch";
+    static const juce::String outputGain = "outputGain";
+    static const juce::String lfoRate = "lfoRate", lfoDepth = "lfoDepth", lfoShape = "lfoShape", lfoTarget = "lfoTarget";
+    static const juce::String lfoSync = "lfoSync", lfoSyncDivision = "lfoSyncDivision";
+    static const juce::String hitEnabled = "hitEnabled";
+    static const juce::String fxEnabled = "fxEnabled", fxTime = "fxTime", fxFeedback = "fxFeedback";
+    static const juce::String fxModRate = "fxModRate", fxModDepth = "fxModDepth", fxMix = "fxMix", fxOrder = "fxOrder";
+    static const juce::String fxSync = "fxSync", fxSyncDivision = "fxSyncDivision";
+    static const juce::String gateEnabled = "gateEnabled", gateSteps = "gateSteps", gateRate = "gateRate";
+    static const juce::String gateDepth = "gateDepth", gateSmooth = "gateSmooth", gateSwing = "gateSwing", gatePhase = "gatePhase";
+    static const juce::String gateRetrigger = "gateRetrigger", gateTarget = "gateTarget", gateShape = "gateShape";
 }
 
 // FL-style tension curve: x in 0..1 -> 0..1. t>0 = slow start, t<0 = fast start.
@@ -22,24 +46,13 @@ inline float tensionCurve (float x, float t)
     return t > 0.0f ? std::pow (x, k) : 1.0f - std::pow (1.0f - x, k);
 }
 
-struct RenderedSample
-{
-    juce::AudioBuffer<float> audio;     // final playable buffer (stereo)
-    int hitIndex = -1;                  // sample where the dry hit starts, -1 if trimmed out
-    double sampleRate = 44100.0;
-    int beats = 0;                      // >0 when synced: draw this many beat lines
-    int beatsPerBar = 4;
-    double fullLengthSec = 0.0;         // untrimmed swell+hit length
-    double trimStartSec = 0.0, trimEndSec = 0.0;
-    std::vector<float> pitchSemi;       // one entry per envStep samples
-    std::vector<float> gainLin;         // one entry per envStep samples
-    static constexpr int envStep = 256;
-};
-
 class ReverseVerbProcessor : public juce::AudioProcessor,
                              private juce::Timer,
                              private juce::AudioProcessorValueTreeState::Listener
 {
+private:
+    juce::UndoManager undoManager;
+
 public:
     ReverseVerbProcessor();
     ~ReverseVerbProcessor() override;
@@ -71,30 +84,81 @@ public:
     int getSampleIndex() const { return currentIndex; }
     int getSampleCount() const { return folderFiles.size(); }
 
+    bool generateSample (rv::GeneratedSampleType type);
+    juce::String getDisplayLabel() const;
+
+    juce::ValueTree buildPresetState();
+    void applyPresetState (const juce::ValueTree& state, const juce::String& presetName);
+    void applyFactoryPreset (const rv::FactoryPreset&);
+    juce::String getCurrentPresetName() const { return currentPresetName; }
+
     void triggerPreview() { triggerRequest = 1; }
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
     void resetEdits();
     void randomizeReverb();
+    std::shared_ptr<const rv::GatePattern> getGatePattern() const;
+    std::shared_ptr<const rv::Envelope> getVolumeEnvelope() const;
+    std::shared_ptr<const rv::Envelope> getPanEnvelope() const;
+    void replaceVolumeEnvelope (const rv::Envelope&, const juce::String& transactionName = "Edit volume envelope");
+    void replacePanEnvelope (const rv::Envelope&, const juce::String& transactionName = "Edit pan envelope");
+    void normalize();
+    void setGateStep (int step, float value, const juce::String& transactionName = "Edit gate step");
+    void replaceGatePattern (const rv::GatePattern&, const juce::String& transactionName = "Edit gate pattern");
+    void clearGatePattern();
+    void fillGatePattern();
+    void invertGatePattern();
+    void randomizeGatePattern();
+    void rotateGatePattern (int amount);
+    void refreshGatePatternFromState();
+    juce::UndoManager& getUndoManager() noexcept { return undoManager; }
 
     std::shared_ptr<const RenderedSample> getRendered() const;
     int getPlayheadPosition() const { return playhead.load(); }
     double getHostBpm() const { return hostBpm.load(); }
+    rv::HostTiming getHostTiming() const noexcept;
+    rv::Division getSyncDivision() const noexcept;
+    rv::GateSettings getGateSettings() const noexcept;
+    bool isUsingV2SyncDivision() const noexcept { return useV2SyncDivision.load(); }
+    RenderDirection getDirection() const noexcept;
     float param (const juce::String& id) const { return apvts.getRawParameterValue (id)->load(); }
     void setParam (const juce::String& id, float value);
+
+    // MIDI CC learn: a host-independent way to map any parameter to an incoming
+    // MIDI CC, since the host's own parameter-context-menu automation extension
+    // (used above via getHostContext()) is host-dependent and unavailable in
+    // Standalone. Real-time-safe: the audio thread is the only writer.
+    static constexpr int numMidiCCs = 128;
+    void armMidiLearn (int parameterIndex) noexcept { midiLearnArmedParamIndex = parameterIndex; }
+    void clearMidiLearn() noexcept { midiLearnArmedParamIndex = -1; }
+    int getMidiLearnArmedParamIndex() const noexcept { return midiLearnArmedParamIndex.load(); }
+    int getMidiCCForParameter (int parameterIndex) const noexcept;
+    void clearMidiMapping (int parameterIndex) noexcept;
 
     juce::AudioProcessorValueTreeState apvts;
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void parameterChanged (const juce::String&, float) override { dirty = true; }
+    void parameterChanged (const juce::String&, float) override;
     void timerCallback() override;
     void render();
     void refreshFolderList (const juce::File& f);
+    void publishGatePattern (const rv::GatePattern&);
+    void storeGatePatternInState (const rv::GatePattern&, juce::UndoManager*);
 
-    struct Voice { bool active = false; int pos = 0; float gain = 1.0f; juce::uint32 id = 0; };
+    struct Voice
+    {
+        bool active = false;
+        int pos = 0;
+        float gain = 1.0f;
+        juce::uint32 id = 0;
+        rv::GateEngine gate;
+    };
     void startVoice (float gain);
-    void renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet);
+    void renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r,
+                      int start, int num, float dry, float wet,
+                      const rv::GatePattern&, const rv::GateSettings&,
+                      const rv::HostTiming&, bool gateEnabled);
 
     juce::AudioFormatManager formatManager;
     juce::CriticalSection sourceLock;
@@ -103,20 +167,47 @@ private:
     juce::File currentFile;
     juce::Array<juce::File> folderFiles;
     int currentIndex = -1;
+    juce::String generatedLabel;
+    juce::String currentPresetName;
 
-    mutable juce::SpinLock renderLock;
-    std::shared_ptr<RenderedSample> rendered;
+    std::shared_ptr<const RenderedSample> rendered;
+    std::shared_ptr<const rv::GatePattern> gatePattern;
+    std::shared_ptr<const rv::Envelope> volumeEnvelope, panEnvelope;
+    void publishVolumeEnvelope (const rv::Envelope&);
+    void publishPanEnvelope (const rv::Envelope&);
+    void storeVolumeEnvelopeInState (const rv::Envelope&, juce::UndoManager*);
+    void storePanEnvelopeInState (const rv::Envelope&, juce::UndoManager*);
 
-    double hostSampleRate = 44100.0;
+    std::atomic<double> hostSampleRate { 44100.0 };
     std::atomic<double> hostBpm { 120.0 };
+    std::atomic<int> hostTimeSigNumerator { 4 }, hostTimeSigDenominator { 4 };
+    std::atomic<double> hostPpqPosition { 0.0 }, hostLoopStartPpq { 0.0 }, hostLoopEndPpq { 0.0 };
+    std::atomic<bool> hostHasPpq { false }, hostIsPlaying { false }, hostIsLooping { false }, hostHasLoopRange { false };
+    std::atomic<bool> useV2SyncDivision { true };
     double lastRenderBpm = 0.0;
+    rv::TimeSignature lastRenderTimeSignature {};
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
+
+    std::atomic<int> midiLearnArmedParamIndex { -1 };
+    std::array<std::atomic<int>, numMidiCCs> ccToParamIndex;
+    void handleIncomingMidiCC (const juce::MidiMessage&) noexcept;
 
     std::array<Voice, 8> voices;
     juce::uint32 voiceCounter = 0;
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
+    std::atomic<float>* hitEnabledParam = nullptr;
+    std::atomic<float>* gateEnabledParam = nullptr;
+    std::atomic<float>* gateStepsParam = nullptr;
+    std::atomic<float>* gateRateParam = nullptr;
+    std::atomic<float>* gateDepthParam = nullptr;
+    std::atomic<float>* gateSmoothParam = nullptr;
+    std::atomic<float>* gateSwingParam = nullptr;
+    std::atomic<float>* gatePhaseParam = nullptr;
+    std::atomic<float>* gateRetriggerParam = nullptr;
+    std::atomic<float>* gateTargetParam = nullptr;
+    std::atomic<float>* gateShapeParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReverseVerbProcessor)
 };

@@ -1,5 +1,12 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "TimeStretch.h"
+#include "DelayChorus.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <new>
 
 // ---------------- Freeverb-style reverb with size / decay / damp / diffusion / separation / width / ER ----------------
 namespace
@@ -104,8 +111,20 @@ namespace
         }
     };
 
-    const int kSyncBeats[] = { 1, 2, 4, 8, 4, 8, 16 };   // 1,2,4,8 beats / 1,2,4 bars
     const float kPitchOct[] = { 1.0f, 2.0f, 4.0f };
+
+    bool stateContainsParameter (const juce::ValueTree& state, const juce::String& parameterId)
+    {
+        if (state.hasProperty (parameterId)
+            || state.getProperty ("id").toString() == parameterId)
+            return true;
+
+        for (int child = 0; child < state.getNumChildren(); ++child)
+            if (stateContainsParameter (state.getChild (child), parameterId))
+                return true;
+
+        return false;
+    }
 }
 
 // ---------------- parameters ----------------
@@ -130,7 +149,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::sep,   "Separation", R { 0.0f, 1.0f, 0.001f }, 0.4f);
     add (IDs::width, "Width",  R { 0.0f, 1.0f, 0.001f }, 1.0f);
     add (IDs::gap,   "Delay",  R { 0.0f, 500.0f, 1.0f }, 0.0f, "ms");
-    add (IDs::tail,  "Length", R { 0.1f, 8.0f, 0.01f, 0.5f }, 1.2f, "s");
+    add (IDs::tail,  "Length", R { 0.1f, 180.0f, 0.01f, 0.3f }, 1.2f, "s");
     add (IDs::shape, "Shape",  R { -1.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::tone,  "Color",  R { 500.0f, 20000.0f, 1.0f, 0.3f }, 20000.0f, "Hz");
     add (IDs::basscut, "Bass Cut", R { 20.0f, 2000.0f, 1.0f, 0.3f }, 20.0f, "Hz");
@@ -138,35 +157,192 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::trimEnd,   "Trim End",   R { 0.0f, 1.0f, 0.0001f }, 1.0f);
     add (IDs::pitch,        "Pitch",         R { -1.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::pitchTension, "Pitch Tension", R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::transpose,    "Transpose",     R { -48.0f, 48.0f, 0.01f }, 0.0f, "st");
     add (IDs::volStart,     "Vol Start",     R { 0.0f, 1.0f, 0.001f }, 1.0f);
     add (IDs::volEnd,       "Vol End",       R { 0.0f, 1.0f, 0.001f }, 1.0f);
     add (IDs::volTension,   "Vol Tension",   R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::panStart,     "Pan Start",     R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::panEnd,       "Pan End",       R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::panTension,   "Pan Tension",   R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::stretch,      "Stretch",       R { 1.0f, 64.0f, 0.001f, 0.25f }, 1.0f, "x");
+    add (IDs::outputGain,   "Output Gain",   R { -24.0f, 24.0f, 0.01f }, 0.0f, "dB");
+    add (IDs::lfoRate,      "LFO Rate",      R { 0.02f, 20.0f, 0.001f, 0.3f }, 2.0f, "Hz");
+    add (IDs::lfoDepth,     "LFO Depth",     R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::lfoShape,     "LFO Shape",     R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::fxTime,       "FX Time",       R { 1.0f, 500.0f, 0.01f, 0.3f }, 20.0f, "ms");
+    add (IDs::fxFeedback,   "FX Feedback",   R { 0.0f, 0.95f, 0.001f }, 0.3f);
+    add (IDs::fxModRate,    "FX Mod Rate",   R { 0.02f, 10.0f, 0.001f, 0.3f }, 1.5f, "Hz");
+    add (IDs::fxModDepth,   "FX Mod Depth",  R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::fxMix,        "FX Mix",        R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::manualBpm,    "BPM",           R { 20.0f, 300.0f, 0.01f }, 120.0f);
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::lfoTarget, 1 }, "LFO Target",
+                     juce::StringArray { "Volume", "Pan", "Pitch", "Width" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::lfoSync, 1 }, "LFO Sync", false));
+    juce::StringArray lfoSyncRates;
+    for (const auto division : rv::allDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        lfoSyncRates.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::lfoSyncDivision, 1 }, "LFO Sync Division",
+                     lfoSyncRates, (int) rv::Division::oneBar));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::hitEnabled, 1 }, "Hit Enabled", true));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::fxEnabled, 1 }, "FX Enabled", false));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::fxOrder, 1 }, "FX Order",
+                     juce::StringArray { "Before Reverse", "After Reverse" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::fxSync, 1 }, "FX Sync", false));
+    juce::StringArray fxSyncRates;
+    for (const auto division : rv::gateRateDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        fxSyncRates.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::fxSyncDivision, 1 }, "FX Sync Division",
+                     fxSyncRates, 7));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::align, 1 }, "Hit on note (PDC)", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::sync, 1 }, "Sync to BPM", false));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::bpmSync, 1 }, "Sync BPM to Host", true));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::direction, 1 }, "Direction",
+                     juce::StringArray { "Rise", "Fall" }, 0));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::syncLen, 1 }, "Sync Length",
                      juce::StringArray { "1 beat", "2 beats", "4 beats", "8 beats", "1 bar", "2 bars", "4 bars" }, 2));
+    juce::StringArray v2Divisions;
+    for (const auto division : rv::allDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        v2Divisions.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::syncDivisionV2, 1 }, "Sync Division",
+                     v2Divisions, (int) rv::Division::oneBar));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::pitchRange, 1 }, "Pitch Range",
                      juce::StringArray { "1 oct", "2 oct", "4 oct" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::gateEnabled, 1 }, "Gator Enabled", false));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateSteps, 1 }, "Gator Steps",
+                     juce::StringArray { "16", "32" }, 0));
+    juce::StringArray gateRates;
+    for (const auto division : rv::gateRateDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        gateRates.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateRate, 1 }, "Gator Rate",
+                     gateRates, 7));
+    add (IDs::gateDepth, "Gator Depth", R { 0.0f, 1.0f, 0.001f }, 1.0f);
+    add (IDs::gateSmooth, "Gator Smooth", R { 0.0f, 100.0f, 0.1f, 0.5f }, 3.0f, "ms");
+    add (IDs::gateSwing, "Gator Swing", R { 0.0f, 0.75f, 0.001f }, 0.0f);
+    add (IDs::gatePhase, "Gator Phase", R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateRetrigger, 1 }, "Gator Retrigger",
+                     juce::StringArray { "Note", "Host" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateTarget, 1 }, "Gator Target",
+                     juce::StringArray { "Swell", "Hit", "Both" }, 2));
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateShape, 1 }, "Gator Shape",
+                     juce::StringArray { "Square", "Smooth", "Ramp Up", "Ramp Down", "Triangle", "Sine", "Curved" }, 0));
     return { p.begin(), p.end() };
 }
 
 ReverseVerbProcessor::ReverseVerbProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "PARAMS", createLayout())
+      apvts (*this, &undoManager, "PARAMS", createLayout())
 {
     formatManager.registerBasicFormats();
     for (auto* id : { &IDs::size, &IDs::decay, &IDs::damp, &IDs::diff, &IDs::er, &IDs::sep, &IDs::width, &IDs::gap,
                       &IDs::tail, &IDs::shape, &IDs::tone, &IDs::basscut, &IDs::align, &IDs::trimStart, &IDs::trimEnd,
-                      &IDs::sync, &IDs::syncLen, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
-                      &IDs::volStart, &IDs::volEnd, &IDs::volTension })
+                      &IDs::sync, &IDs::syncLen, &IDs::syncDivisionV2, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
+                      &IDs::transpose, &IDs::stretch, &IDs::volStart, &IDs::volEnd, &IDs::volTension,
+                      &IDs::panStart, &IDs::panEnd, &IDs::panTension,
+                      &IDs::lfoRate, &IDs::lfoDepth, &IDs::lfoShape, &IDs::lfoTarget, &IDs::lfoSync, &IDs::lfoSyncDivision,
+                      &IDs::fxEnabled, &IDs::fxTime, &IDs::fxFeedback, &IDs::fxModRate, &IDs::fxModDepth, &IDs::fxMix, &IDs::fxOrder,
+                      &IDs::fxSync, &IDs::fxSyncDivision,
+                      &IDs::direction })
         apvts.addParameterListener (*id, this);
+    for (auto& cc : ccToParamIndex)
+        cc = -1;
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
+    hitEnabledParam = apvts.getRawParameterValue (IDs::hitEnabled);
+    gateEnabledParam = apvts.getRawParameterValue (IDs::gateEnabled);
+    gateStepsParam = apvts.getRawParameterValue (IDs::gateSteps);
+    gateRateParam = apvts.getRawParameterValue (IDs::gateRate);
+    gateDepthParam = apvts.getRawParameterValue (IDs::gateDepth);
+    gateSmoothParam = apvts.getRawParameterValue (IDs::gateSmooth);
+    gateSwingParam = apvts.getRawParameterValue (IDs::gateSwing);
+    gatePhaseParam = apvts.getRawParameterValue (IDs::gatePhase);
+    gateRetriggerParam = apvts.getRawParameterValue (IDs::gateRetrigger);
+    gateTargetParam = apvts.getRawParameterValue (IDs::gateTarget);
+    gateShapeParam = apvts.getRawParameterValue (IDs::gateShape);
     rendered = std::make_shared<RenderedSample>();
+    const rv::GatePattern initialPattern;
+    publishGatePattern (initialPattern);
+    storeGatePatternInState (initialPattern, nullptr);
+    const rv::Envelope initialEnvelope;
+    publishVolumeEnvelope (initialEnvelope);
+    storeVolumeEnvelopeInState (initialEnvelope, nullptr);
+    publishPanEnvelope (initialEnvelope);
+    storePanEnvelopeInState (initialEnvelope, nullptr);
+    undoManager.clearUndoHistory();
     startTimer (60);
 }
 
 ReverseVerbProcessor::~ReverseVerbProcessor() { stopTimer(); }
+
+void ReverseVerbProcessor::parameterChanged (const juce::String& parameterId, float)
+{
+    if (parameterId == IDs::syncDivisionV2)
+        useV2SyncDivision = true;
+    dirty = true;
+}
+
+RenderDirection ReverseVerbProcessor::getDirection() const noexcept
+{
+    return param (IDs::direction) >= 0.5f ? RenderDirection::fall : RenderDirection::rise;
+}
+
+rv::HostTiming ReverseVerbProcessor::getHostTiming() const noexcept
+{
+    auto timing = rv::sanitiseTiming (hostBpm.load(),
+                                      hostTimeSigNumerator.load(),
+                                      hostTimeSigDenominator.load(),
+                                      hostHasPpq.load() ? hostPpqPosition.load()
+                                                        : std::numeric_limits<double>::quiet_NaN());
+    const auto sampleRate = hostSampleRate.load();
+    timing.sampleRate = std::isfinite (sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
+    timing.isPlaying = hostIsPlaying.load();
+    timing.isLooping = hostIsLooping.load();
+    timing.hasLoopRange = hostHasLoopRange.load();
+    timing.loopStartPpq = hostLoopStartPpq.load();
+    timing.loopEndPpq = hostLoopEndPpq.load();
+    return timing;
+}
+
+rv::Division ReverseVerbProcessor::getSyncDivision() const noexcept
+{
+    if (! useV2SyncDivision.load())
+        return rv::legacyDivision ((int) param (IDs::syncLen));
+
+    const auto choice = juce::jlimit (0, (int) rv::Division::count - 1,
+                                      (int) param (IDs::syncDivisionV2));
+    return static_cast<rv::Division> (choice);
+}
+
+rv::GateSettings ReverseVerbProcessor::getGateSettings() const noexcept
+{
+    rv::GateSettings settings;
+    const auto rateIndex = juce::jlimit (0, (int) rv::gateRateDivisions.size() - 1,
+                                         (int) gateRateParam->load());
+    settings.rate = rv::gateRateDivisions[(size_t) rateIndex];
+    settings.activeSteps = gateStepsParam->load() < 0.5f ? 16 : 32;
+    settings.depth = gateDepthParam->load();
+    settings.smoothingMilliseconds = gateSmoothParam->load();
+    settings.swing = gateSwingParam->load();
+    settings.phase = gatePhaseParam->load();
+    settings.retrigger = gateRetriggerParam->load() < 0.5f ? rv::GateRetrigger::note
+                                                            : rv::GateRetrigger::host;
+    const auto target = juce::jlimit (0, 2, (int) gateTargetParam->load());
+    settings.target = static_cast<rv::GateTarget> (target);
+    const auto shape = juce::jlimit (0, 6, (int) gateShapeParam->load());
+    settings.shape = static_cast<rv::GateShape> (shape);
+    return settings;
+}
 
 void ReverseVerbProcessor::setParam (const juce::String& id, float value)
 {
@@ -178,11 +354,53 @@ void ReverseVerbProcessor::setParam (const juce::String& id, float value)
     }
 }
 
+int ReverseVerbProcessor::getMidiCCForParameter (int parameterIndex) const noexcept
+{
+    if (parameterIndex < 0) return -1;
+    for (int cc = 0; cc < numMidiCCs; ++cc)
+        if (ccToParamIndex[(size_t) cc].load() == parameterIndex)
+            return cc;
+    return -1;
+}
+
+void ReverseVerbProcessor::clearMidiMapping (int parameterIndex) noexcept
+{
+    for (auto& cc : ccToParamIndex)
+        if (cc.load() == parameterIndex)
+            cc = -1;
+}
+
+void ReverseVerbProcessor::handleIncomingMidiCC (const juce::MidiMessage& msg) noexcept
+{
+    const auto cc = msg.getControllerNumber();
+    if (cc < 0 || cc >= numMidiCCs) return;
+
+    const auto armed = midiLearnArmedParamIndex.exchange (-1);
+    if (armed >= 0)
+    {
+        ccToParamIndex[(size_t) cc] = armed;
+        return;
+    }
+
+    const auto paramIndex = ccToParamIndex[(size_t) cc].load();
+    if (paramIndex < 0) return;
+    auto& params = getParameters();
+    if (paramIndex >= params.size()) return;
+    params.getUnchecked (paramIndex)->setValueNotifyingHost ((float) msg.getControllerValue() / 127.0f);
+}
+
 void ReverseVerbProcessor::resetEdits()
 {
     setParam (IDs::trimStart, 0.0f);  setParam (IDs::trimEnd, 1.0f);
     setParam (IDs::pitch, 0.0f);      setParam (IDs::pitchTension, 0.0f);
+    setParam (IDs::transpose, 0.0f);
+    setParam (IDs::stretch, 1.0f);
     setParam (IDs::volStart, 1.0f);   setParam (IDs::volEnd, 1.0f);  setParam (IDs::volTension, 0.0f);
+    setParam (IDs::panStart, 0.0f);   setParam (IDs::panEnd, 0.0f);  setParam (IDs::panTension, 0.0f);
+    setParam (IDs::lfoDepth, 0.0f);
+    replaceVolumeEnvelope (rv::Envelope {}, "Reset edits");
+    replacePanEnvelope (rv::Envelope {}, "Reset edits");
+    stopAll(); // silence any currently-playing preview so the reset is heard cleanly on the next trigger
 }
 
 void ReverseVerbProcessor::randomizeReverb()
@@ -199,9 +417,207 @@ void ReverseVerbProcessor::randomizeReverb()
     setParam (IDs::basscut, 20.0f + std::pow (rng.nextFloat(), 2.0f) * 800.0f);
 }
 
+std::shared_ptr<const rv::GatePattern> ReverseVerbProcessor::getGatePattern() const
+{
+    return std::atomic_load_explicit (&gatePattern, std::memory_order_acquire);
+}
+
+void ReverseVerbProcessor::publishGatePattern (const rv::GatePattern& pattern)
+{
+    std::shared_ptr<const rv::GatePattern> immutable =
+        std::make_shared<const rv::GatePattern> (rv::sanitiseGatePattern (pattern));
+    std::atomic_store_explicit (&gatePattern, std::move (immutable), std::memory_order_release);
+}
+
+void ReverseVerbProcessor::storeGatePatternInState (const rv::GatePattern& pattern,
+                                                     juce::UndoManager* undo)
+{
+    const auto existing = apvts.state.getChildWithName (rv::gatePatternStateType);
+    if (existing.isValid())
+        apvts.state.removeChild (existing, undo);
+    apvts.state.addChild (rv::gatePatternToValueTree (pattern), -1, undo);
+}
+
+void ReverseVerbProcessor::replaceGatePattern (const rv::GatePattern& pattern,
+                                               const juce::String& transactionName)
+{
+    const auto clean = rv::sanitiseGatePattern (pattern);
+    undoManager.beginNewTransaction (transactionName);
+    const auto requestedStepChoice = clean.activeSteps == 32 ? 1.0f : 0.0f;
+    if (std::abs (gateStepsParam->load() - requestedStepChoice) > 0.1f)
+        if (auto* parameter = apvts.getParameter (IDs::gateSteps))
+        {
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (requestedStepChoice));
+            parameter->endChangeGesture();
+        }
+    storeGatePatternInState (clean, &undoManager);
+    publishGatePattern (clean);
+}
+
+std::shared_ptr<const rv::Envelope> ReverseVerbProcessor::getVolumeEnvelope() const
+{
+    return std::atomic_load_explicit (&volumeEnvelope, std::memory_order_acquire);
+}
+
+std::shared_ptr<const rv::Envelope> ReverseVerbProcessor::getPanEnvelope() const
+{
+    return std::atomic_load_explicit (&panEnvelope, std::memory_order_acquire);
+}
+
+void ReverseVerbProcessor::publishVolumeEnvelope (const rv::Envelope& env)
+{
+    auto immutable = std::make_shared<const rv::Envelope> (rv::sanitiseEnvelope (env, 0.0f, 1.0f));
+    std::atomic_store_explicit (&volumeEnvelope, std::move (immutable), std::memory_order_release);
+}
+
+void ReverseVerbProcessor::publishPanEnvelope (const rv::Envelope& env)
+{
+    auto immutable = std::make_shared<const rv::Envelope> (rv::sanitiseEnvelope (env, -1.0f, 1.0f));
+    std::atomic_store_explicit (&panEnvelope, std::move (immutable), std::memory_order_release);
+}
+
+void ReverseVerbProcessor::storeVolumeEnvelopeInState (const rv::Envelope& env, juce::UndoManager* undo)
+{
+    const auto existing = apvts.state.getChildWithName (rv::volumeEnvelopeStateType);
+    if (existing.isValid())
+        apvts.state.removeChild (existing, undo);
+    apvts.state.addChild (rv::envelopeToValueTree (rv::volumeEnvelopeStateType, env, 0.0f, 1.0f), -1, undo);
+}
+
+void ReverseVerbProcessor::storePanEnvelopeInState (const rv::Envelope& env, juce::UndoManager* undo)
+{
+    const auto existing = apvts.state.getChildWithName (rv::panEnvelopeStateType);
+    if (existing.isValid())
+        apvts.state.removeChild (existing, undo);
+    apvts.state.addChild (rv::envelopeToValueTree (rv::panEnvelopeStateType, env, -1.0f, 1.0f), -1, undo);
+}
+
+void ReverseVerbProcessor::replaceVolumeEnvelope (const rv::Envelope& env, const juce::String& transactionName)
+{
+    const auto clean = rv::sanitiseEnvelope (env, 0.0f, 1.0f);
+    undoManager.beginNewTransaction (transactionName);
+    storeVolumeEnvelopeInState (clean, &undoManager);
+    publishVolumeEnvelope (clean);
+}
+
+void ReverseVerbProcessor::replacePanEnvelope (const rv::Envelope& env, const juce::String& transactionName)
+{
+    const auto clean = rv::sanitiseEnvelope (env, -1.0f, 1.0f);
+    undoManager.beginNewTransaction (transactionName);
+    storePanEnvelopeInState (clean, &undoManager);
+    publishPanEnvelope (clean);
+}
+
+void ReverseVerbProcessor::normalize()
+{
+    const auto r = getRendered();
+    if (r == nullptr || r->getNumSamples() <= 0)
+        return;
+    const float dry = param (IDs::dry) * (param (IDs::hitEnabled) > 0.5f ? 1.0f : 0.0f), wet = param (IDs::wet);
+    const int n = r->getNumSamples();
+    float peak = 0.0001f;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const bool hasWet = ch < r->wetAudio.getNumChannels() && r->wetAudio.getNumSamples() >= n;
+        const bool hasDry = ch < r->dryAudio.getNumChannels() && r->dryAudio.getNumSamples() >= n;
+        const auto* w = hasWet ? r->wetAudio.getReadPointer (ch) : nullptr;
+        const auto* d = hasDry ? r->dryAudio.getReadPointer (ch) : nullptr;
+        for (int i = 0; i < n; ++i)
+        {
+            const float sample = (w != nullptr ? w[i] * wet : 0.0f) + (d != nullptr ? d[i] * dry : 0.0f);
+            peak = juce::jmax (peak, std::abs (sample));
+        }
+    }
+    setParam (IDs::outputGain, juce::jlimit (-24.0f, 24.0f, juce::Decibels::gainToDecibels (0.9f / peak)));
+}
+
+void ReverseVerbProcessor::setGateStep (int step, float value,
+                                        const juce::String& transactionName)
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    if (step < 0 || step >= (int) edited.steps.size())
+        return;
+    edited.activeSteps = getGateSettings().activeSteps;
+    edited.steps[(size_t) step] = value;
+    replaceGatePattern (edited, transactionName);
+}
+
+void ReverseVerbProcessor::clearGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    edited.steps.fill (0.0f);
+    replaceGatePattern (edited, "Clear gate pattern");
+}
+
+void ReverseVerbProcessor::fillGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    edited.steps.fill (1.0f);
+    replaceGatePattern (edited, "Fill gate pattern");
+}
+
+void ReverseVerbProcessor::invertGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    for (auto& step : edited.steps)
+        step = 1.0f - step;
+    replaceGatePattern (edited, "Invert gate pattern");
+}
+
+void ReverseVerbProcessor::randomizeGatePattern()
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    edited.activeSteps = getGateSettings().activeSteps;
+    auto value = edited.seed != 0 ? edited.seed : 0x52564732u;
+    for (auto& step : edited.steps)
+    {
+        value ^= value << 13;
+        value ^= value >> 17;
+        value ^= value << 5;
+        step = (float) (value & 0x00ffffffu) / (float) 0x00ffffffu;
+    }
+    edited.seed = value;
+    replaceGatePattern (edited, "Randomize gate pattern");
+}
+
+void ReverseVerbProcessor::rotateGatePattern (int amount)
+{
+    auto current = getGatePattern();
+    auto edited = current != nullptr ? *current : rv::GatePattern {};
+    const auto active = getGateSettings().activeSteps;
+    edited.activeSteps = active;
+    const auto rotation = active > 0 ? amount % active : 0;
+    if (rotation == 0)
+        return;
+    if (rotation > 0)
+        std::rotate (edited.steps.begin(), edited.steps.begin() + active - rotation,
+                     edited.steps.begin() + active);
+    else
+        std::rotate (edited.steps.begin(), edited.steps.begin() - rotation,
+                     edited.steps.begin() + active);
+    replaceGatePattern (edited, rotation > 0 ? "Rotate gate right" : "Rotate gate left");
+}
+
+void ReverseVerbProcessor::refreshGatePatternFromState()
+{
+    const auto current = getGatePattern();
+    const auto fallback = current != nullptr ? *current : rv::GatePattern {};
+    publishGatePattern (rv::gatePatternFromValueTree (
+        apvts.state.getChildWithName (rv::gatePatternStateType), fallback));
+}
+
 void ReverseVerbProcessor::prepareToPlay (double sampleRate, int)
 {
-    if (std::abs (sampleRate - hostSampleRate) > 0.5) dirty = true;
+    if (std::abs (sampleRate - hostSampleRate.load()) > 0.5) dirty = true;
     hostSampleRate = sampleRate;
     for (auto& v : voices) v.active = false;
     playhead = -1;
@@ -220,26 +636,28 @@ void ReverseVerbProcessor::startVoice (float gain)
     Voice* target = nullptr;
     for (auto& v : voices) if (! v.active) { target = &v; break; }
     if (target == nullptr) { target = &voices[0]; for (auto& v : voices) if (v.id < target->id) target = &v; }
-    target->active = true; target->pos = 0; target->gain = gain; target->id = ++voiceCounter;
+    target->active = true;
+    target->pos = 0;
+    target->gain = gain;
+    target->id = ++voiceCounter;
+    target->gate.reset();
 }
 
-void ReverseVerbProcessor::renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet)
+void ReverseVerbProcessor::renderRange (juce::AudioBuffer<float>& out, const RenderedSample& renderedSample,
+                                        int start, int num, float dry, float wet,
+                                        const rv::GatePattern& pattern,
+                                        const rv::GateSettings& settings,
+                                        const rv::HostTiming& timing,
+                                        bool gateEnabled)
 {
     if (num <= 0) return;
-    const int total = r.audio.getNumSamples();
-    const int hitAt = r.hitIndex >= 0 ? r.hitIndex : total;
-    const int numCh = out.getNumChannels();
+    const int total = renderedSample.getNumSamples();
     for (auto& v : voices)
     {
         if (! v.active) continue;
-        for (int ch = 0; ch < numCh; ++ch)
-        {
-            auto* o = out.getWritePointer (ch) + start;
-            const float* s = r.audio.getReadPointer (juce::jmin (ch, 1));
-            int pos = v.pos;
-            for (int i = 0; i < num && pos < total; ++i, ++pos)
-                o[i] += s[pos] * (pos < hitAt ? wet : dry) * v.gain;
-        }
+        rv::mixGatedRenderedRange (out, renderedSample, v.pos, start, num,
+                                   wet * v.gain, dry * v.gain, v.gate,
+                                   pattern, settings, timing, v.pos, start, gateEnabled);
         v.pos += num;
         if (v.pos >= total) v.active = false;
     }
@@ -250,34 +668,76 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
 
-    if (auto* ph = getPlayHead())
-        if (auto pos = ph->getPosition())
-            if (auto bpm = pos->getBpm())
-                if (*bpm > 20.0) hostBpm = *bpm;
+    double bpm = rv::defaultBpm;
+    int numerator = 4, denominator = 4;
+    double ppq = std::numeric_limits<double>::quiet_NaN();
+    bool isPlaying = false, isLooping = false, validLoop = false;
+    double loopStart = 0.0, loopEnd = 0.0;
 
-    std::shared_ptr<const RenderedSample> r;
-    {
-        juce::SpinLock::ScopedTryLockType tl (renderLock);
-        if (! tl.isLocked()) return;
-        r = rendered;
-    }
-    if (r == nullptr || r->audio.getNumSamples() == 0) { playhead = -1; return; }
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+        {
+            if (const auto value = position->getBpm()) bpm = *value;
+            if (const auto signature = position->getTimeSignature())
+            {
+                numerator = signature->numerator;
+                denominator = signature->denominator;
+            }
+            if (const auto value = position->getPpqPosition()) ppq = *value;
+            isPlaying = position->getIsPlaying();
+            isLooping = position->getIsLooping();
+            if (const auto loop = position->getLoopPoints())
+            {
+                validLoop = std::isfinite (loop->ppqStart) && std::isfinite (loop->ppqEnd)
+                         && loop->ppqEnd > loop->ppqStart;
+                if (validLoop) { loopStart = loop->ppqStart; loopEnd = loop->ppqEnd; }
+            }
+        }
+
+    if (param (IDs::bpmSync) < 0.5f)
+        bpm = param (IDs::manualBpm);
+
+    const auto timing = rv::sanitiseTiming (bpm, numerator, denominator, ppq);
+    hostBpm = timing.bpm;
+    hostTimeSigNumerator = timing.timeSignature.numerator;
+    hostTimeSigDenominator = timing.timeSignature.denominator;
+    hostPpqPosition = timing.ppqPosition;
+    hostHasPpq = timing.hasPpqPosition;
+    hostIsPlaying = isPlaying;
+    hostIsLooping = isLooping;
+    hostLoopStartPpq = loopStart;
+    hostLoopEndPpq = loopEnd;
+    hostHasLoopRange = validLoop;
+
+    const auto r = std::atomic_load_explicit (&rendered, std::memory_order_acquire);
+    if (r == nullptr || r->getNumSamples() == 0) { playhead = -1; return; }
 
     if (stopRequest.exchange (0) != 0) for (auto& v : voices) v.active = false;
     if (triggerRequest.exchange (0) != 0) startVoice (1.0f);
 
-    const float dry = dryParam->load(), wet = wetParam->load();
+    const float outGainLin = juce::Decibels::decibelsToGain (param (IDs::outputGain));
+    const float hitOn = hitEnabledParam->load() >= 0.5f ? 1.0f : 0.0f;
+    const float dry = dryParam->load() * outGainLin * hitOn, wet = wetParam->load() * outGainLin;
+    const auto patternSnapshot = getGatePattern();
+    const rv::GatePattern fallbackPattern;
+    const auto& pattern = patternSnapshot != nullptr ? *patternSnapshot : fallbackPattern;
+    const auto gateSettings = getGateSettings();
+    const auto timingSnapshot = getHostTiming();
+    const bool gateEnabled = gateEnabledParam->load() >= 0.5f;
     const int numSamples = buffer.getNumSamples();
     int pos = 0;
     for (const auto meta : midi)
     {
         const auto msg = meta.getMessage();
         const int at = juce::jlimit (0, numSamples, meta.samplePosition);
-        renderRange (buffer, *r, pos, at - pos, dry, wet);
+        renderRange (buffer, *r, pos, at - pos, dry, wet,
+                     pattern, gateSettings, timingSnapshot, gateEnabled);
         pos = at;
         if (msg.isNoteOn()) startVoice (msg.getFloatVelocity());
+        else if (msg.isController()) handleIncomingMidiCC (msg);
     }
-    renderRange (buffer, *r, pos, numSamples - pos, dry, wet);
+    renderRange (buffer, *r, pos, numSamples - pos, dry, wet,
+                 pattern, gateSettings, timingSnapshot, gateEnabled);
 
     const Voice* newest = nullptr;
     for (auto& v : voices) if (v.active && (newest == nullptr || v.id > newest->id)) newest = &v;
@@ -286,13 +746,17 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
 std::shared_ptr<const RenderedSample> ReverseVerbProcessor::getRendered() const
 {
-    juce::SpinLock::ScopedLockType l (renderLock);
-    return rendered;
+    return std::atomic_load_explicit (&rendered, std::memory_order_acquire);
 }
 
 void ReverseVerbProcessor::timerCallback()
 {
-    if (param (IDs::sync) > 0.5f && std::abs (hostBpm.load() - lastRenderBpm) > 0.01) dirty = true;
+    const auto timing = getHostTiming();
+    if (param (IDs::sync) > 0.5f
+        && (std::abs (timing.bpm - lastRenderBpm) > 0.01
+            || timing.timeSignature.numerator != lastRenderTimeSignature.numerator
+            || timing.timeSignature.denominator != lastRenderTimeSignature.denominator))
+        dirty = true;
     if (dirty.exchange (false)) render();
     if (previewAfterRender.exchange (false)) triggerPreview();
 }
@@ -305,12 +769,20 @@ void ReverseVerbProcessor::render()
     { const juce::ScopedLock sl (sourceLock); src.makeCopyOf (sourceBuffer); srcSR = sourceSR; }
 
     auto out = std::make_shared<RenderedSample>();
-    const double sr = hostSampleRate;
-    const double bpm = hostBpm.load();
+    const auto hostTiming = getHostTiming();
+    const double sr = hostTiming.sampleRate;
+    const double bpm = hostTiming.bpm;
+    const auto direction = getDirection();
     lastRenderBpm = bpm;
+    lastRenderTimeSignature = hostTiming.timeSignature;
     out->sampleRate = sr;
+    out->bpm = bpm;
+    out->direction = direction;
+    out->timeSignatureNumerator = hostTiming.timeSignature.numerator;
+    out->timeSignatureDenominator = hostTiming.timeSignature.denominator;
 
     if (src.getNumSamples() > 0 && srcSR > 0)
+    try
     {
         // 1. resample hit to host rate, stereo
         const int srcLen = src.getNumSamples();
@@ -318,7 +790,7 @@ void ReverseVerbProcessor::render()
         padded.clear();
         for (int ch = 0; ch < src.getNumChannels(); ++ch) padded.copyFrom (ch, 0, src, ch, 0, srcLen);
         const double ratio = srcSR / sr;
-        const int hitLen = juce::jmax (1, (int) std::floor (srcLen / ratio));
+        int hitLen = juce::jmax (1, (int) std::floor (srcLen / ratio));
         juce::AudioBuffer<float> hit (2, hitLen);
         for (int ch = 0; ch < 2; ++ch)
         {
@@ -328,18 +800,49 @@ void ReverseVerbProcessor::render()
         const float hitMag = hit.getMagnitude (0, hitLen);
         if (hitMag > 0.0f) hit.applyGain (0.9f / hitMag);
 
+        // 1b. optional time-stretch: spreads the source material itself across a
+        // much longer span (independent of pitch), so full-length risers/fallers
+        // can be built from real sample content rather than just a long reverb
+        // tail appended to a short hit. Everything downstream (reverb, filters,
+        // timeline placement) just keeps working off whatever hitLen now is.
+        const float stretchAmt = param (IDs::stretch);
+        if (stretchAmt > 1.001f)
+        {
+            try
+            {
+                hit = rv::timeStretch (hit, sr, (double) stretchAmt, (int) (sr * 300.0));
+                hitLen = hit.getNumSamples();
+                const float stretchedMag = hit.getMagnitude (0, hitLen);
+                if (stretchedMag > 0.0f) hit.applyGain (0.9f / stretchedMag);
+            }
+            catch (const std::bad_alloc&)
+            {
+                // Extremely unlikely now that timeStretch caps its own output
+                // length before allocating, but if memory is genuinely this
+                // tight, fall back to the un-stretched hit rather than crash.
+                hit.setSize (2, hitLen, true, true, true);
+            }
+        }
+
         // 2. tail length (free or synced to BPM)
         const int gapLen = (int) (param (IDs::gap) * 0.001f * sr);
-        double tailSec = param (IDs::tail);
         const bool sync = param (IDs::sync) > 0.5f;
-        int beats = 0;
+        int tailLen = juce::jmax (1, (int) std::llround (param (IDs::tail) * sr));
         if (sync)
         {
-            const int choice = juce::jlimit (0, 6, (int) param (IDs::syncLen));
-            beats = kSyncBeats[choice];
-            tailSec = juce::jmax (0.05, beats * 60.0 / bpm - hitLen / sr - gapLen / sr);
+            const auto division = getSyncDivision();
+            const auto targetLength = rv::durationSamples (division, bpm, sr, hostTiming.timeSignature);
+            const auto minimumTail = (std::int64_t) std::llround (0.05 * sr);
+            tailLen = wetTailSamplesForTimeline (direction, targetLength, hitLen, gapLen, minimumTail);
+            out->musicalQuarterNotes = rv::quarterNotes (division, hostTiming.timeSignature);
+            out->gridQuarterNotes = juce::jmin (1.0, out->musicalQuarterNotes);
         }
-        const int tailLen = (int) (tailSec * sr);
+        // Safety ceiling: SYNC can request a very long tail at slow tempos with a
+        // large bar count (e.g. 64 bars at 20 BPM is over 12 minutes). Combined
+        // with a heavily stretched hit, an unclamped render here would allocate
+        // huge buffers and could stall the message thread (render() runs on a
+        // juce::Timer callback). Cap well above any reasonable free LENGTH use.
+        tailLen = juce::jmin (tailLen, (int) (sr * 300.0));
         const int revLen  = hitLen + tailLen;
 
         // 3. reverb
@@ -350,8 +853,32 @@ void ReverseVerbProcessor::render()
         engine.setup (sr, param (IDs::size), param (IDs::decay), param (IDs::damp), param (IDs::diff), param (IDs::sep), param (IDs::width), param (IDs::er));
         engine.process (rev.getWritePointer (0), rev.getWritePointer (1), revLen);
 
-        // 4. reverse
-        for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
+        // 3b. delay/chorus/echo: a single modulated delay line whose settings can
+        // read as any of the three, or a blend. Placing it before or after the
+        // reversal below is what turns it into a *reverse* echo/delay/chorus -
+        // its repeats get flipped backwards along with the swell, or not.
+        const bool fxOn = param (IDs::fxEnabled) > 0.5f;
+        const bool fxBeforeReverse = (int) param (IDs::fxOrder) == 0;
+        float fxTimeMs = param (IDs::fxTime);
+        if (param (IDs::fxSync) > 0.5f)
+        {
+            const auto fxDivisionIndex = juce::jlimit (0, (int) rv::gateRateDivisions.size() - 1, (int) param (IDs::fxSyncDivision));
+            const auto fxDivision = rv::gateRateDivisions[(size_t) fxDivisionIndex];
+            const auto fxQuarterNotes = rv::quarterNotes (fxDivision, hostTiming.timeSignature);
+            fxTimeMs = juce::jlimit (1.0f, 500.0f, (float) (fxQuarterNotes * 60000.0 / bpm));
+        }
+        if (fxOn && fxBeforeReverse)
+            rv::applyDelayChorus (rev, revLen, sr, fxTimeMs, param (IDs::fxFeedback),
+                                  param (IDs::fxModRate), param (IDs::fxModDepth), param (IDs::fxMix));
+
+        // 4. Orient the wet response. The reverb engine is wet-only, so the
+        // dry transient is mixed exclusively from the separate dry layer.
+        if (direction == RenderDirection::rise)
+            for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
+
+        if (fxOn && ! fxBeforeReverse)
+            rv::applyDelayChorus (rev, revLen, sr, fxTimeMs, param (IDs::fxFeedback),
+                                  param (IDs::fxModRate), param (IDs::fxModDepth), param (IDs::fxMix));
 
         // 5. filters
         auto applyIIR = [&] (const juce::IIRCoefficients& c, int passes)
@@ -369,22 +896,38 @@ void ReverseVerbProcessor::render()
         if (std::abs (s) > 0.001f && revLen > 1)
             for (int i = 0; i < revLen; ++i)
             {
-                const float x = (float) i / (float) (revLen - 1);
-                const float g = s > 0.0f ? std::pow (x, 4.0f * s) : 1.0f + (-s) * 3.0f * (1.0f - x);
+                const float timelineProgress = (float) i / (float) (revLen - 1);
+                const float towardHit = direction == RenderDirection::rise
+                                          ? timelineProgress
+                                          : 1.0f - timelineProgress;
+                const float g = s > 0.0f ? std::pow (towardHit, 4.0f * s)
+                                         : 1.0f + (-s) * 3.0f * (1.0f - towardHit);
                 for (int ch = 0; ch < 2; ++ch) rev.getWritePointer (ch)[i] *= g;
             }
-        rev.applyGainRamp (0, juce::jmin (revLen, (int) (sr * 0.01)), 0.0f, 1.0f);
+        const int boundaryFade = juce::jmin (revLen, (int) (sr * 0.01));
+        if (direction == RenderDirection::rise)
+            rev.applyGainRamp (0, boundaryFade, 0.0f, 1.0f);
+        else
+            rev.applyGainRamp (revLen - boundaryFade, boundaryFade, 1.0f, 0.0f);
         const float revMag = rev.getMagnitude (0, revLen);
         if (revMag > 0.0f) rev.applyGain (0.9f / revMag);
 
-        // 7. combine: swell + gap + hit
-        const int swellLen = revLen + gapLen;
-        const int fullLen = swellLen + hitLen;
-        juce::AudioBuffer<float> full (2, fullLen);
-        full.clear();
-        for (int ch = 0; ch < 2; ++ch) { full.copyFrom (ch, 0, rev, ch, 0, revLen); full.copyFrom (ch, swellLen, hit, ch, 0, hitLen); }
+        // 7. Place wet and dry on one aligned timeline. Keeping these layers
+        // separate prevents the mix controls from relying on timeline guesses.
+        const auto timeline = calculateLayerTimeline (direction, revLen, hitLen, gapLen);
+        const int fullLen = timeline.totalLength;
+        juce::AudioBuffer<float> fullWet (2, fullLen);
+        juce::AudioBuffer<float> fullDry (2, fullLen);
+        fullWet.clear();
+        fullDry.clear();
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            fullWet.copyFrom (ch, timeline.wetStart, rev, ch, 0, revLen);
+            fullDry.copyFrom (ch, timeline.dryStart, hit, ch, 0, hitLen);
+        }
         out->fullLengthSec = fullLen / sr;
-        out->beats = beats;
+        out->beats = (int) std::ceil (out->musicalQuarterNotes);
+        out->beatsPerBar = hostTiming.timeSignature.numerator;
 
         // 8. trim
         int tStart = (int) (param (IDs::trimStart) * fullLen);
@@ -394,67 +937,210 @@ void ReverseVerbProcessor::render()
         const int trimLen = tEnd - tStart;
         out->trimStartSec = tStart / sr;
         out->trimEndSec   = tEnd / sr;
-        int hitIdx = swellLen - tStart;
+        int hitIdx = timeline.dryStart - tStart;
         if (hitIdx < 0 || hitIdx >= trimLen) hitIdx = -1;
+        int dryInputStart = juce::jmax (0, timeline.dryStart - tStart);
+        int dryInputEnd = juce::jmin (trimLen, timeline.dryStart + hitLen - tStart);
+        if (dryInputEnd <= dryInputStart) dryInputStart = dryInputEnd = -1;
+        int wetInputStart = juce::jmax (0, timeline.wetStart - tStart);
+        int wetInputEnd = juce::jmin (trimLen, timeline.wetStart + revLen - tStart);
+        if (wetInputEnd <= wetInputStart) wetInputStart = wetInputEnd = -1;
+
+        // LFO: one oscillator, several possible destinations (Volume, Pan,
+        // Pitch, Width). Computed here, before the pitch sweep, so Pitch
+        // modulation can ride the same resample pass as the sweep below;
+        // Volume/Pan/Width reuse the identical function further down.
+        float lfoRateHz = param (IDs::lfoRate);
+        if (param (IDs::lfoSync) > 0.5f)
+        {
+            const auto lfoDivisionIndex = juce::jlimit (0, (int) rv::allDivisions.size() - 1, (int) param (IDs::lfoSyncDivision));
+            const auto lfoDivision = rv::allDivisions[(size_t) lfoDivisionIndex];
+            const auto periodSeconds = rv::quarterNotes (lfoDivision, hostTiming.timeSignature) * 60.0 / bpm;
+            if (periodSeconds > 0.0001) lfoRateHz = (float) (1.0 / periodSeconds);
+        }
+        const float lfoDepthAmt = param (IDs::lfoDepth);
+        const float lfoShapeAmt = param (IDs::lfoShape);
+        const int lfoTargetIdx = (int) param (IDs::lfoTarget); // 0 Volume, 1 Pan, 2 Pitch, 3 Width
+        const bool lfoActive = lfoDepthAmt > 0.0005f;
+        const float lfoExponent = juce::jmap (juce::jlimit (0.0f, 1.0f, lfoShapeAmt), 1.0f, 0.05f);
+        auto lfoValueAt = [&] (int sampleIndex) noexcept -> float
+        {
+            if (! lfoActive) return 0.0f;
+            const float phase = std::fmod ((float) sampleIndex / (float) sr * lfoRateHz, 1.0f);
+            const float osc = std::sin (juce::MathConstants<float>::twoPi * phase);
+            return (osc < 0.0f ? -1.0f : 1.0f) * std::pow (std::abs (osc), lfoExponent) * lfoDepthAmt;
+        };
+        const bool pitchLfoActive = lfoActive && lfoTargetIdx == 2;
 
         // 9. pitch sweep (varispeed)
         const float pitchAmt = param (IDs::pitch);
         const float octaves = kPitchOct[juce::jlimit (0, 2, (int) param (IDs::pitchRange))];
         const float pitchT = param (IDs::pitchTension);
-        juce::AudioBuffer<float> outBuf;
+        // Transpose is a constant offset added into the same varispeed engine as the
+        // sweep below, so it re-uses that resampling pass instead of a second one.
+        const float transposeSemis = param (IDs::transpose);
+        juce::AudioBuffer<float> wetBuffer;
+        juce::AudioBuffer<float> dryBuffer;
         std::vector<float> semiPerSample;
         int hitOut = -1;
-        if (std::abs (pitchAmt) > 0.001f)
+        int dryOutStart = -1, dryOutEnd = -1;
+        int wetOutStart = -1, wetOutEnd = -1;
+        if (std::abs (pitchAmt) > 0.001f || std::abs (transposeSemis) > 0.001f || pitchLfoActive)
         {
-            std::vector<float> l, r;
-            l.reserve ((size_t) trimLen * 2); r.reserve ((size_t) trimLen * 2);
-            const float* fl = full.getReadPointer (0) + tStart;
-            const float* fr = full.getReadPointer (1) + tStart;
+            std::array<std::vector<float>, 2> wetSamples, drySamples;
+            for (auto& samples : wetSamples) samples.reserve ((size_t) trimLen * 2);
+            for (auto& samples : drySamples) samples.reserve ((size_t) trimLen * 2);
             double p = 0.0;
-            while (p < trimLen - 1 && l.size() < (size_t) (sr * 60.0))
+            // Pitching down stretches the timeline; the sweep and Transpose can now
+            // combine to as much as -8 octaves (256x slowdown at the extreme), so the
+            // cap must scale with trimLen rather than a fixed duration or long/slow
+            // renders get truncated. An absolute ceiling still guards against runaway
+            // memory use for genuinely pathological combinations.
+            const auto sampleCap = (size_t) juce::jmin<juce::int64> ((juce::int64) trimLen * 300 + 8,
+                                                                     (juce::int64) (sr * 600.0));
+            while (p < trimLen - 1 && semiPerSample.size() < sampleCap)
             {
                 const int i0 = (int) p; const float frac = (float) (p - i0);
-                l.push_back (fl[i0] + (fl[i0 + 1] - fl[i0]) * frac);
-                r.push_back (fr[i0] + (fr[i0 + 1] - fr[i0]) * frac);
-                const float semis = pitchAmt * octaves * 12.0f * tensionCurve ((float) p / (float) trimLen, pitchT);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const auto* wet = fullWet.getReadPointer (ch) + tStart;
+                    const auto* dry = fullDry.getReadPointer (ch) + tStart;
+                    wetSamples[(size_t) ch].push_back (wet[i0] + (wet[i0 + 1] - wet[i0]) * frac);
+                    drySamples[(size_t) ch].push_back (dry[i0] + (dry[i0 + 1] - dry[i0]) * frac);
+                }
+                const int outputIndex = (int) semiPerSample.size();
+                const float semis = pitchAmt * octaves * 12.0f * tensionCurve ((float) p / (float) trimLen, pitchT)
+                                  + transposeSemis
+                                  + (pitchLfoActive ? lfoValueAt (outputIndex) * 12.0f : 0.0f);
                 semiPerSample.push_back (semis);
-                if (hitIdx >= 0 && hitOut < 0 && p >= hitIdx) hitOut = (int) l.size() - 1;
+                if (hitIdx >= 0 && hitOut < 0 && p >= hitIdx) hitOut = outputIndex;
+                if (dryInputStart >= 0 && p >= dryInputStart && p < dryInputEnd)
+                {
+                    if (dryOutStart < 0) dryOutStart = outputIndex;
+                    dryOutEnd = outputIndex + 1;
+                }
+                if (wetInputStart >= 0 && p >= wetInputStart && p < wetInputEnd)
+                {
+                    if (wetOutStart < 0) wetOutStart = outputIndex;
+                    wetOutEnd = outputIndex + 1;
+                }
                 p += std::pow (2.0, semis / 12.0);
             }
-            outBuf.setSize (2, (int) l.size());
-            for (size_t i = 0; i < l.size(); ++i) { outBuf.setSample (0, (int) i, l[i]); outBuf.setSample (1, (int) i, r[i]); }
+            const int outputLength = (int) semiPerSample.size();
+            wetBuffer.setSize (2, outputLength);
+            dryBuffer.setSize (2, outputLength);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                wetBuffer.copyFrom (ch, 0, wetSamples[(size_t) ch].data(), outputLength);
+                dryBuffer.copyFrom (ch, 0, drySamples[(size_t) ch].data(), outputLength);
+            }
         }
         else
         {
-            outBuf.setSize (2, trimLen);
-            for (int ch = 0; ch < 2; ++ch) outBuf.copyFrom (ch, 0, full, ch, tStart, trimLen);
+            wetBuffer.setSize (2, trimLen);
+            dryBuffer.setSize (2, trimLen);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                wetBuffer.copyFrom (ch, 0, fullWet, ch, tStart, trimLen);
+                dryBuffer.copyFrom (ch, 0, fullDry, ch, tStart, trimLen);
+            }
             semiPerSample.assign ((size_t) trimLen, 0.0f);
             hitOut = hitIdx;
+            dryOutStart = dryInputStart;
+            dryOutEnd = dryInputEnd;
+            wetOutStart = wetInputStart;
+            wetOutEnd = wetInputEnd;
         }
 
-        // 10. volume envelope
-        const int n = outBuf.getNumSamples();
+        // 10. volume + pan envelopes (each may carry extra hand-placed points
+        // beyond the Start/End knobs), plus width, and an optional LFO nudging
+        // whichever of Volume/Pan/Width it's aimed at (Pitch was handled above,
+        // inside the resample pass).
+        const int n = wetBuffer.getNumSamples();
         const float v0 = param (IDs::volStart), v1 = param (IDs::volEnd), vt = param (IDs::volTension);
-        const bool flatVol = std::abs (v0 - 1.0f) < 0.001f && std::abs (v1 - 1.0f) < 0.001f;
+        const float p0 = param (IDs::panStart), p1 = param (IDs::panEnd), pt = param (IDs::panTension);
+        const rv::Envelope emptyEnvelope;
+        const auto volEnvPtr = getVolumeEnvelope();
+        const auto panEnvPtr = getPanEnvelope();
+        const auto& volE = volEnvPtr != nullptr ? *volEnvPtr : emptyEnvelope;
+        const auto& panE = panEnvPtr != nullptr ? *panEnvPtr : emptyEnvelope;
+        const bool flatVol = std::abs (v0 - 1.0f) < 0.001f && std::abs (v1 - 1.0f) < 0.001f && volE.numInterior == 0
+                          && ! (lfoActive && lfoTargetIdx == 0);
+        const bool flatPan = std::abs (p0) < 0.001f && std::abs (p1) < 0.001f && panE.numInterior == 0
+                          && ! (lfoActive && lfoTargetIdx == 1);
+        const bool widthLfoActive = lfoActive && lfoTargetIdx == 3;
         for (int i = 0; i < n; ++i)
         {
+            const float lfoVal = lfoValueAt (i);
+
             float g = 1.0f;
             if (! flatVol)
             {
-                const float lvl = v0 + (v1 - v0) * tensionCurve ((float) i / (float) juce::jmax (1, n - 1), vt);
-                g = lvl * lvl;
-                for (int ch = 0; ch < 2; ++ch) outBuf.getWritePointer (ch)[i] *= g;
+                const float t = (float) i / (float) juce::jmax (1, n - 1);
+                float lvl = rv::envelopeValueAt (volE, t, v0, v1, vt);
+                if (lfoActive && lfoTargetIdx == 0) lvl *= (1.0f + lfoVal);
+                g = juce::jmax (0.0f, lvl * lvl);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    wetBuffer.getWritePointer (ch)[i] *= g;
+                    dryBuffer.getWritePointer (ch)[i] *= g;
+                }
+            }
+            if (! flatPan)
+            {
+                const float t = (float) i / (float) juce::jmax (1, n - 1);
+                float pan = rv::envelopeValueAt (panE, t, p0, p1, pt);
+                if (lfoActive && lfoTargetIdx == 1) pan += lfoVal;
+                pan = juce::jlimit (-1.0f, 1.0f, pan);
+                // Balance law (not equal-power): unity on the side panned toward,
+                // the other side attenuates. Matches pan = 0 exactly so there's no
+                // level jump the moment this control is first touched.
+                const float panGainL = juce::jmin (1.0f, 1.0f - pan);
+                const float panGainR = juce::jmin (1.0f, 1.0f + pan);
+                wetBuffer.getWritePointer (0)[i] *= panGainL; wetBuffer.getWritePointer (1)[i] *= panGainR;
+                dryBuffer.getWritePointer (0)[i] *= panGainL; dryBuffer.getWritePointer (1)[i] *= panGainR;
+            }
+            if (widthLfoActive)
+            {
+                // Mid/side width pulse: 0 collapses to mono, 1 is unchanged,
+                // 2 exaggerates the stereo spread. Applied to both layers.
+                const float widthFactor = juce::jlimit (0.0f, 2.0f, 1.0f + lfoVal);
+                for (auto* buf : { &wetBuffer, &dryBuffer })
+                {
+                    auto* l = buf->getWritePointer (0);
+                    auto* r = buf->getWritePointer (1);
+                    const float mid = (l[i] + r[i]) * 0.5f;
+                    const float side = (l[i] - r[i]) * 0.5f * widthFactor;
+                    l[i] = mid + side;
+                    r[i] = mid - side;
+                }
             }
             if (i % RenderedSample::envStep == 0) { out->gainLin.push_back (g); out->pitchSemi.push_back (semiPerSample[(size_t) i]); }
         }
 
-        out->audio = std::move (outBuf);
-        out->hitIndex = hitOut;
+        out->wetAudio = std::move (wetBuffer);
+        out->dryAudio = std::move (dryBuffer);
+        out->displayAudio.setSize (2, n);
+        out->displayAudio.clear();
+        mixRenderedRange (out->displayAudio, *out, 0, 0, n, 1.0f, 1.0f);
+        out->dryHitIndex = hitOut;
+        out->dryStart = dryOutStart;
+        out->dryEnd = dryOutEnd;
+        out->wetStart = wetOutStart;
+        out->wetEnd = wetOutEnd;
+    }
+    catch (const std::bad_alloc&)
+    {
+        // An extreme combination of Stretch/Length/Sync at a high sample rate
+        // ran out of memory rendering this hit. Fall back to silence rather
+        // than crash the plugin and lose the user's whole session.
+        *out = RenderedSample {};
     }
 
-    const int latency = out->hitIndex > 0 ? out->hitIndex : 0;
-    { juce::SpinLock::ScopedLockType l (renderLock); rendered = out; }
-    setLatencySamples (param (IDs::align) > 0.5f ? latency : 0);
+    const int latency = latencySamplesFor (*out, param (IDs::align) > 0.5f);
+    std::shared_ptr<const RenderedSample> immutableOut = std::move (out);
+    std::atomic_store_explicit (&rendered, std::move (immutableOut), std::memory_order_release);
+    setLatencySamples (latency);
 }
 
 // ---------------- samples ----------------
@@ -474,15 +1160,88 @@ bool ReverseVerbProcessor::loadSampleFile (const juce::File& f, bool previewAfte
 {
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (f));
     if (reader == nullptr || reader->lengthInSamples <= 0) return false;
-    const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 10.0));
+    const int len = (int) std::min<juce::int64> (reader->lengthInSamples,
+                                                 (juce::int64) (reader->sampleRate * 10.0));
     juce::AudioBuffer<float> buf ((int) reader->numChannels, len);
     reader->read (&buf, 0, len, 0, true, true);
     { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = reader->sampleRate; }
     currentFile = f;
+    generatedLabel.clear();
     refreshFolderList (f);
     if (previewAfter) previewAfterRender = true;
     dirty = true;
     return true;
+}
+
+bool ReverseVerbProcessor::generateSample (rv::GeneratedSampleType type)
+{
+    const auto sr = hostSampleRate.load();
+    const double sampleRate = sr > 0.0 ? sr : 44100.0;
+    const auto seed = (juce::uint32) juce::Random::getSystemRandom().nextInt();
+    auto buf = rv::generateSample (type, sampleRate, seed);
+    if (buf.getNumSamples() <= 0) return false;
+    { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = sampleRate; }
+    currentFile = juce::File();
+    folderFiles.clear();
+    currentIndex = -1;
+    generatedLabel = rv::generatedSampleName (type);
+    previewAfterRender = true;
+    dirty = true;
+    return true;
+}
+
+juce::String ReverseVerbProcessor::getDisplayLabel() const
+{
+    if (generatedLabel.isNotEmpty()) return generatedLabel;
+    return currentFile.existsAsFile() ? currentFile.getFileName() : juce::String();
+}
+
+// ---------------- presets ----------------
+
+juce::ValueTree ReverseVerbProcessor::buildPresetState()
+{
+    return apvts.copyState();
+}
+
+void ReverseVerbProcessor::applyPresetState (const juce::ValueTree& state, const juce::String& presetName)
+{
+    if (! state.isValid())
+        return;
+
+    const auto current = getGatePattern();
+    const auto fallback = current != nullptr ? *current : rv::GatePattern {};
+    const auto restoredPattern = rv::gatePatternFromValueTree (
+        state.getChildWithName (rv::gatePatternStateType), fallback);
+    const auto restoredVolEnvelope = rv::envelopeFromValueTree (rv::volumeEnvelopeStateType,
+        state.getChildWithName (rv::volumeEnvelopeStateType), 0.0f, 1.0f);
+    const auto restoredPanEnvelope = rv::envelopeFromValueTree (rv::panEnvelopeStateType,
+        state.getChildWithName (rv::panEnvelopeStateType), -1.0f, 1.0f);
+
+    apvts.replaceState (state);
+    publishGatePattern (restoredPattern);
+    if (! apvts.state.getChildWithName (rv::gatePatternStateType).isValid())
+        storeGatePatternInState (restoredPattern, nullptr);
+    publishVolumeEnvelope (restoredVolEnvelope);
+    if (! apvts.state.getChildWithName (rv::volumeEnvelopeStateType).isValid())
+        storeVolumeEnvelopeInState (restoredVolEnvelope, nullptr);
+    publishPanEnvelope (restoredPanEnvelope);
+    if (! apvts.state.getChildWithName (rv::panEnvelopeStateType).isValid())
+        storePanEnvelopeInState (restoredPanEnvelope, nullptr);
+
+    currentPresetName = presetName;
+    dirty = true;
+}
+
+void ReverseVerbProcessor::applyFactoryPreset (const rv::FactoryPreset& preset)
+{
+    for (const auto& [id, value] : preset.params)
+        setParam (id, value);
+    if (preset.gatePattern.has_value())
+        replaceGatePattern (*preset.gatePattern, "Load preset: " + preset.name);
+    replaceVolumeEnvelope (rv::Envelope {}, "Load preset: " + preset.name);
+    replacePanEnvelope (rv::Envelope {}, "Load preset: " + preset.name);
+    currentPresetName = preset.name;
+    dirty = true;
 }
 
 void ReverseVerbProcessor::nextSample()
@@ -509,16 +1268,24 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
 {
     if (dirty.exchange (false)) render();
     auto r = getRendered();
-    if (r == nullptr || r->audio.getNumSamples() == 0) return false;
-    const int n = r->audio.getNumSamples();
-    const int hitAt = r->hitIndex >= 0 ? r->hitIndex : n;
-    juce::AudioBuffer<float> mix;
-    mix.makeCopyOf (r->audio);
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        mix.applyGain (ch, 0, hitAt, wetParam->load());
-        mix.applyGain (ch, hitAt, n - hitAt, dryParam->load());
-    }
+    if (r == nullptr || r->getNumSamples() == 0) return false;
+    const int n = r->getNumSamples();
+    juce::AudioBuffer<float> mix (2, n);
+    mix.clear();
+    const auto patternSnapshot = getGatePattern();
+    const rv::GatePattern fallbackPattern;
+    const auto& pattern = patternSnapshot != nullptr ? *patternSnapshot : fallbackPattern;
+    auto gateSettings = getGateSettings();
+    gateSettings.retrigger = rv::GateRetrigger::note;
+    auto timing = getHostTiming();
+    timing.hasPpqPosition = false;
+    rv::GateEngine exportGate;
+    exportGate.reset();
+    const float exportOutGainLin = juce::Decibels::decibelsToGain (param (IDs::outputGain));
+    const float exportHitOn = hitEnabledParam->load() >= 0.5f ? 1.0f : 0.0f;
+    rv::mixGatedRenderedRange (mix, *r, 0, 0, n, wetParam->load() * exportOutGainLin, dryParam->load() * exportOutGainLin * exportHitOn,
+                               exportGate, pattern, gateSettings, timing, 0, 0,
+                               gateEnabledParam->load() >= 0.5f);
     dest.deleteFile();
     std::unique_ptr<juce::FileOutputStream> os (dest.createOutputStream());
     if (os == nullptr || ! os->openedOk()) return false;
@@ -535,7 +1302,35 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
 void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
+    state.setProperty ("schemaVersion", 2, nullptr);
+    state.setProperty ("useV2SyncDivision", useV2SyncDivision.load(), nullptr);
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
+    state.setProperty ("presetName", currentPresetName, nullptr);
+    {
+        juce::StringArray ccEntries;
+        for (auto& cc : ccToParamIndex)
+            ccEntries.add (juce::String (cc.load()));
+        state.setProperty ("midiCCMap", ccEntries.joinIntoString (","), nullptr);
+    }
+    const auto existingPattern = state.getChildWithName (rv::gatePatternStateType);
+    if (existingPattern.isValid())
+        state.removeChild (existingPattern, nullptr);
+    if (const auto pattern = getGatePattern())
+    {
+        auto savedPattern = *pattern;
+        savedPattern.activeSteps = getGateSettings().activeSteps;
+        state.addChild (rv::gatePatternToValueTree (savedPattern), -1, nullptr);
+    }
+    for (auto* type : { &rv::volumeEnvelopeStateType, &rv::panEnvelopeStateType })
+    {
+        const auto existing = state.getChildWithName (*type);
+        if (existing.isValid())
+            state.removeChild (existing, nullptr);
+    }
+    if (const auto volEnv = getVolumeEnvelope())
+        state.addChild (rv::envelopeToValueTree (rv::volumeEnvelopeStateType, *volEnv, 0.0f, 1.0f), -1, nullptr);
+    if (const auto panEnv = getPanEnvelope())
+        state.addChild (rv::envelopeToValueTree (rv::panEnvelopeStateType, *panEnv, -1.0f, 1.0f), -1, nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -545,9 +1340,45 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
     {
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.isValid()) return;
+        const bool hasDirection = stateContainsParameter (state, IDs::direction);
+        const bool restoreV2Sync = (bool) state.getProperty ("useV2SyncDivision", false)
+                                && stateContainsParameter (state, IDs::syncDivisionV2);
+        const auto restoredPattern = rv::gatePatternFromValueTree (
+            state.getChildWithName (rv::gatePatternStateType));
+        const auto restoredVolEnvelope = rv::envelopeFromValueTree (rv::volumeEnvelopeStateType,
+            state.getChildWithName (rv::volumeEnvelopeStateType), 0.0f, 1.0f);
+        const auto restoredPanEnvelope = rv::envelopeFromValueTree (rv::panEnvelopeStateType,
+            state.getChildWithName (rv::panEnvelopeStateType), -1.0f, 1.0f);
         apvts.replaceState (state);
+        publishGatePattern (restoredPattern);
+        if (! apvts.state.getChildWithName (rv::gatePatternStateType).isValid())
+            storeGatePatternInState (restoredPattern, nullptr);
+        publishVolumeEnvelope (restoredVolEnvelope);
+        if (! apvts.state.getChildWithName (rv::volumeEnvelopeStateType).isValid())
+            storeVolumeEnvelopeInState (restoredVolEnvelope, nullptr);
+        publishPanEnvelope (restoredPanEnvelope);
+        if (! apvts.state.getChildWithName (rv::panEnvelopeStateType).isValid())
+            storePanEnvelopeInState (restoredPanEnvelope, nullptr);
+        if (! hasDirection)
+            if (auto* direction = apvts.getParameter (IDs::direction))
+                direction->setValueNotifyingHost (direction->convertTo0to1 (0.0f));
+        if (! restoreV2Sync)
+            if (auto* division = apvts.getParameter (IDs::syncDivisionV2))
+            {
+                const auto mapped = (float) static_cast<int> (rv::legacyDivision ((int) param (IDs::syncLen)));
+                division->setValueNotifyingHost (division->convertTo0to1 (mapped));
+            }
+        useV2SyncDivision = restoreV2Sync;
+        currentPresetName = state.getProperty ("presetName", "").toString();
+        {
+            const auto ccMap = juce::StringArray::fromTokens (
+                state.getProperty ("midiCCMap", "").toString(), ",", "");
+            for (int cc = 0; cc < numMidiCCs; ++cc)
+                ccToParamIndex[(size_t) cc] = cc < ccMap.size() ? ccMap[cc].getIntValue() : -1;
+        }
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
+        undoManager.clearUndoHistory();
         dirty = true;
     }
 }
