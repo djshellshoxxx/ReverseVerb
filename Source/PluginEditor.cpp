@@ -685,6 +685,14 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
                 const float pos = juce::jlimit (0.01f, 0.99f, (downPos.x - p.getX()) / p.getWidth());
                 const float value = juce::jlimit (0.0f, 1.0f, (p.getBottom() - downPos.y) / p.getHeight());
                 const auto added = rv::withInteriorPoint (base, pos, value, 0.0f, 1.0f);
+                if (added.numInterior <= base.numInterior)
+                {
+                    // Already at the point cap - nothing was added, so don't let
+                    // the nearest-point search below latch onto some unrelated
+                    // existing point and drag it by accident.
+                    drag = Drag::none;
+                    break;
+                }
                 proc.replaceVolumeEnvelope (added, "Add volume point");
                 dragBaseVolEnvelope = added;
                 dragPointIndex = rv::nearestInteriorPoint (added, pos, value, 1.0f, 0.2f);
@@ -715,6 +723,11 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
                 const float pos = juce::jlimit (0.01f, 0.99f, (downPos.x - p.getX()) / p.getWidth());
                 const float value = juce::jlimit (-1.0f, 1.0f, ((p.getBottom() - downPos.y) / p.getHeight() - 0.5f) * 2.0f);
                 const auto added = rv::withInteriorPoint (base, pos, value, -1.0f, 1.0f);
+                if (added.numInterior <= base.numInterior)
+                {
+                    drag = Drag::none;
+                    break;
+                }
                 proc.replacePanEnvelope (added, "Add pan point");
                 dragBasePanEnvelope = added;
                 dragPointIndex = rv::nearestInteriorPoint (added, pos, value, 2.0f, 0.2f);
@@ -931,6 +944,7 @@ FX  (delay / chorus / echo, FX page)
   A single modulated delay line that reads as different things depending on its settings: short TIME + high MOD DEPTH sounds like a chorus; longer TIME + FEEDBACK sounds like an echo/delay; settings in between blend the two, or add FEEDBACK on top of a chorus for a combination of all three.
   MIX: dry/wet blend. FEEDBACK: number/length of repeats. MOD RATE / MOD DEPTH: speed and amount of the delay-time wobble that creates the chorus character.
   ORDER: Before Reverse applies it before this plugin's own Rise-mode reversal, so its repeats get flipped backwards too - a true reverse echo/delay/chorus. After Reverse keeps the repeats forward, sitting on top of the already-reversed swell. FALL never reverses, so ORDER has no audible effect in FALL mode.
+  SYNC: lock TIME to a tempo division (1/64T up to 1/4D) instead of the free TIME knob, for echoes that land exactly on the beat.
   The FX toggle (top-left of the page) enables/disables the whole effect.
 
 VOLUME
@@ -943,10 +957,11 @@ LFO
   RATE (Hz) and DEPTH set the modulation speed and amount; SHAPE morphs the wave from round (sine) to square. TARGET picks whether it's Volume or Pan being modulated. DEPTH at 0 = off.
 
 GATOR
+  Applied last, live, at playback time - after Stretch, Reverb, FX, Pitch, and the Volume/Pan/LFO envelopes are baked in, so it always gates the final mix.
   Paint 16 or 32 step levels; hold Shift while dragging to draw a straight ramp. RATE sets each step from 1/64T to 1/4D.
   DEPTH blends the gate with the original sound. SMOOTH removes clicks. SWING lengthens odd steps and shortens even steps. PHASE rotates timing continuously.
   NOTE restarts the pattern for every hit. HOST locks it to the DAW PPQ timeline and falls back to NOTE when the host supplies no PPQ.
-  TARGET gates the SWELL, HIT, or BOTH layers. SHAPE chooses Square, Smooth, Ramp Up/Down, Triangle, Sine, or Curved movement inside each step.
+  TARGET gates the SWELL, HIT, or BOTH layers (defaults to BOTH so the effect is always audible regardless of how loud the dry hit is - switch to SWELL or HIT only for the classic "gate the tail but keep the transient steady" trick).  SHAPE chooses Square, Smooth, Ramp Up/Down, Triangle, Sine, or Curved movement inside each step.
   CLEAR, FILL, INVERT, RANDOM, rotate, COPY/PASTE, and UNDO/REDO edit the pattern without interrupting audio.
 
 MIDI LEARN
@@ -1508,6 +1523,23 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     addAndMakeVisible (fxOrderLabel);
     kFxTime->slider.setTooltip ("Short + high Mod Depth reads as chorus; longer + Feedback reads as echo/delay. Right-click for host automation.");
 
+    addAndMakeVisible (fxSyncToggle);
+    fxSyncToggle.setTooltip ("Lock the delay/chorus TIME to the host tempo instead of the free TIME knob. Right-click for host automation.");
+    fxSyncAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::fxSync, fxSyncToggle);
+    if (auto* parameter = proc.apvts.getParameter (IDs::fxSync))
+        fxSyncToggle.setHostParameter (*this, *parameter, proc);
+    addAndMakeVisible (fxSyncDivisionCombo);
+    for (const auto division : rv::gateRateDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        fxSyncDivisionCombo.addItem (juce::String::fromUTF8 (label.data(), (int) label.size()),
+                                     fxSyncDivisionCombo.getNumItems() + 1);
+    }
+    fxSyncDivisionCombo.setTooltip ("Tempo division for the delay/chorus TIME when SYNC is on.");
+    fxSyncDivisionAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::fxSyncDivision, fxSyncDivisionCombo);
+    if (auto* parameter = proc.apvts.getParameter (IDs::fxSyncDivision))
+        fxSyncDivisionCombo.setHostParameter (*this, *parameter, proc);
+
     // Tabs: everything below the transport row is paged, one screen's worth at
     // a time, so the plugin stays usable at a much smaller window size.
     for (auto* t : { &tabMain, &tabMod, &tabFx, &tabGator })
@@ -1537,7 +1569,8 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
                 &lfoTargetLabel, &lfoTargetCombo };
     fxPage = { &fxEnabledToggle, &kFxTime->slider, &kFxTime->label, &kFxFeedback->slider, &kFxFeedback->label,
                &kFxModRate->slider, &kFxModRate->label, &kFxModDepth->slider, &kFxModDepth->label,
-               &kFxMix->slider, &kFxMix->label, &fxOrderLabel, &fxOrderCombo };
+               &kFxMix->slider, &kFxMix->label, &fxOrderLabel, &fxOrderCombo,
+               &fxSyncToggle, &fxSyncDivisionCombo };
     gatorPage = { &gateToggle, &gateStepsCombo, &gateRateCombo, &gateRetriggerCombo, &gateTargetCombo, &gateShapeCombo,
                   &kGateDepth->slider, &kGateDepth->label, &kGateSmooth->slider, &kGateSmooth->label,
                   &kGateSwing->slider, &kGateSwing->label, &kGatePhase->slider, &kGatePhase->label,
@@ -1710,6 +1743,9 @@ void ReverseVerbEditor::timerCallback()
     const bool bpmHostSynced = proc.param (IDs::bpmSync) > 0.5f;
     kBpm->slider.setEnabled (! bpmHostSynced);
     kBpm->slider.setAlpha (bpmHostSynced ? 0.4f : 1.0f);
+    const bool fxTimeSynced = proc.param (IDs::fxSync) > 0.5f;
+    kFxTime->slider.setEnabled (! fxTimeSynced);
+    kFxTime->slider.setAlpha (fxTimeSynced ? 0.4f : 1.0f);
 }
 
 void ReverseVerbEditor::paint (juce::Graphics& g)
@@ -1891,6 +1927,11 @@ void ReverseVerbEditor::resized()
             auto orderArea = top.removeFromRight (140);
             fxOrderLabel.setBounds (orderArea.removeFromTop (14));
             fxOrderCombo.setBounds (orderArea);
+            top.removeFromRight (10);
+            auto syncArea = top.removeFromRight (150);
+            fxSyncToggle.setBounds (syncArea.removeFromLeft (60));
+            syncArea.removeFromLeft (6);
+            fxSyncDivisionCombo.setBounds (syncArea);
             fxArea.removeFromTop (10);
             layoutKnobs (fxArea, { kFxTime, kFxFeedback, kFxModRate, kFxModDepth, kFxMix });
             break;

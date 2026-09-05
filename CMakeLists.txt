@@ -73,6 +73,7 @@ if(BUILD_TESTING)
         Tests/GatePatternClipboardTests.cpp
         Tests/SampleGeneratorTests.cpp
         Tests/PresetManagerTests.cpp
+        Tests/EnvelopeTests.cpp
         Source/GateEngine.cpp
         Source/GatedMixer.cpp
         Source/GatePatternClipboard.cpp
@@ -80,7 +81,9 @@ if(BUILD_TESTING)
         Source/RenderedSample.cpp
         Source/MusicalTime.cpp
         Source/SampleGenerator.cpp
-        Source/PresetManager.cpp)
+        Source/PresetManager.cpp
+        Source/Envelope.cpp
+        Source/EnvelopeState.cpp)
 
     target_compile_definitions(ReverseVerbTests PRIVATE
         JUCE_UNIT_TESTS=1

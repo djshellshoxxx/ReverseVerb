@@ -242,10 +242,12 @@ private:
     HostContextToggleButton fxEnabledToggle { "FX" };
     HostContextComboBox fxOrderCombo;
     juce::Label fxOrderLabel;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt, fxEnabledAtt;
+    HostContextToggleButton fxSyncToggle { "SYNC" };
+    HostContextComboBox fxSyncDivisionCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt, fxEnabledAtt, fxSyncAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt,
                                                                             gateStepsAtt, gateRateAtt, gateRetriggerAtt,
-                                                                            gateTargetAtt, gateShapeAtt, lfoTargetAtt, fxOrderAtt;
+                                                                            gateTargetAtt, gateShapeAtt, lfoTargetAtt, fxOrderAtt, fxSyncDivisionAtt;
     juce::TextButton gateClear { "CLEAR" }, gateFill { "FILL" }, gateInvert { "INVERT" }, gateRandom { "RANDOM" },
                      gateLeft { "<" }, gateRight { ">" }, gateCopy { "COPY" }, gatePaste { "PASTE" },
                      gateUndo { "UNDO" }, gateRedo { "REDO" };

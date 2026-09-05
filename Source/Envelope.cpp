@@ -58,22 +58,19 @@ float envelopeValueAt (const Envelope& env, float t, float startValue, float end
 }
 
 Envelope withInteriorPoint (const Envelope& env, float pos, float value,
-                            float minValue, float maxValue, float tolerance) noexcept
+                            float minValue, float maxValue, float) noexcept
 {
+    // Deliberately no "merge if nearby" here: matching by position alone would
+    // ignore how far away in value the existing point is, so a click anywhere
+    // in that vertical strip could silently overwrite an unrelated point.
+    // Callers that want "edit an existing point" already do proper 2D
+    // (position + value) hit-testing before calling this.
     auto clean = sanitiseEnvelope (env, minValue, maxValue);
-    pos = std::clamp (pos, 0.01f, 0.99f);
-    value = std::clamp (value, minValue, maxValue);
-
-    for (int i = 0; i < clean.numInterior; ++i)
-        if (std::abs (clean.interior[(size_t) i].pos - pos) < tolerance)
-        {
-            clean.interior[(size_t) i].value = value;
-            return clean;
-        }
-
     if (clean.numInterior >= Envelope::maxInteriorPoints)
         return clean;
 
+    pos = std::clamp (pos, 0.01f, 0.99f);
+    value = std::clamp (value, minValue, maxValue);
     clean.interior[(size_t) clean.numInterior++] = { pos, value };
     return sanitiseEnvelope (clean, minValue, maxValue);
 }

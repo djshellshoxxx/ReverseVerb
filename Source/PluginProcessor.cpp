@@ -180,6 +180,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::fxEnabled, 1 }, "FX Enabled", false));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::fxOrder, 1 }, "FX Order",
                      juce::StringArray { "Before Reverse", "After Reverse" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::fxSync, 1 }, "FX Sync", false));
+    juce::StringArray fxSyncRates;
+    for (const auto division : rv::gateRateDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        fxSyncRates.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::fxSyncDivision, 1 }, "FX Sync Division",
+                     fxSyncRates, 7));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::align, 1 }, "Hit on note (PDC)", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::sync, 1 }, "Sync to BPM", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::bpmSync, 1 }, "Sync BPM to Host", true));
@@ -215,7 +224,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateRetrigger, 1 }, "Gator Retrigger",
                      juce::StringArray { "Note", "Host" }, 0));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateTarget, 1 }, "Gator Target",
-                     juce::StringArray { "Swell", "Hit", "Both" }, 0));
+                     juce::StringArray { "Swell", "Hit", "Both" }, 2));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::gateShape, 1 }, "Gator Shape",
                      juce::StringArray { "Square", "Smooth", "Ramp Up", "Ramp Down", "Triangle", "Sine", "Curved" }, 0));
     return { p.begin(), p.end() };
@@ -233,6 +242,7 @@ ReverseVerbProcessor::ReverseVerbProcessor()
                       &IDs::panStart, &IDs::panEnd, &IDs::panTension,
                       &IDs::lfoRate, &IDs::lfoDepth, &IDs::lfoShape, &IDs::lfoTarget,
                       &IDs::fxEnabled, &IDs::fxTime, &IDs::fxFeedback, &IDs::fxModRate, &IDs::fxModDepth, &IDs::fxMix, &IDs::fxOrder,
+                      &IDs::fxSync, &IDs::fxSyncDivision,
                       &IDs::direction })
         apvts.addParameterListener (*id, this);
     for (auto& cc : ccToParamIndex)
@@ -494,7 +504,7 @@ void ReverseVerbProcessor::normalize()
     const auto r = getRendered();
     if (r == nullptr || r->getNumSamples() <= 0)
         return;
-    const float dry = param (IDs::dry), wet = param (IDs::wet);
+    const float dry = param (IDs::dry) * (param (IDs::hitEnabled) > 0.5f ? 1.0f : 0.0f), wet = param (IDs::wet);
     const int n = r->getNumSamples();
     float peak = 0.0001f;
     for (int ch = 0; ch < 2; ++ch)
@@ -807,6 +817,12 @@ void ReverseVerbProcessor::render()
             out->musicalQuarterNotes = rv::quarterNotes (division, hostTiming.timeSignature);
             out->gridQuarterNotes = juce::jmin (1.0, out->musicalQuarterNotes);
         }
+        // Safety ceiling: SYNC can request a very long tail at slow tempos with a
+        // large bar count (e.g. 64 bars at 20 BPM is over 12 minutes). Combined
+        // with a heavily stretched hit, an unclamped render here would allocate
+        // huge buffers and could stall the message thread (render() runs on a
+        // juce::Timer callback). Cap well above any reasonable free LENGTH use.
+        tailLen = juce::jmin (tailLen, (int) (sr * 300.0));
         const int revLen  = hitLen + tailLen;
 
         // 3. reverb
@@ -823,8 +839,16 @@ void ReverseVerbProcessor::render()
         // its repeats get flipped backwards along with the swell, or not.
         const bool fxOn = param (IDs::fxEnabled) > 0.5f;
         const bool fxBeforeReverse = (int) param (IDs::fxOrder) == 0;
+        float fxTimeMs = param (IDs::fxTime);
+        if (param (IDs::fxSync) > 0.5f)
+        {
+            const auto fxDivisionIndex = juce::jlimit (0, (int) rv::gateRateDivisions.size() - 1, (int) param (IDs::fxSyncDivision));
+            const auto fxDivision = rv::gateRateDivisions[(size_t) fxDivisionIndex];
+            const auto fxQuarterNotes = rv::quarterNotes (fxDivision, hostTiming.timeSignature);
+            fxTimeMs = juce::jlimit (1.0f, 500.0f, (float) (fxQuarterNotes * 60000.0 / bpm));
+        }
         if (fxOn && fxBeforeReverse)
-            rv::applyDelayChorus (rev, revLen, sr, param (IDs::fxTime), param (IDs::fxFeedback),
+            rv::applyDelayChorus (rev, revLen, sr, fxTimeMs, param (IDs::fxFeedback),
                                   param (IDs::fxModRate), param (IDs::fxModDepth), param (IDs::fxMix));
 
         // 4. Orient the wet response. The reverb engine is wet-only, so the
@@ -833,7 +857,7 @@ void ReverseVerbProcessor::render()
             for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
 
         if (fxOn && ! fxBeforeReverse)
-            rv::applyDelayChorus (rev, revLen, sr, param (IDs::fxTime), param (IDs::fxFeedback),
+            rv::applyDelayChorus (rev, revLen, sr, fxTimeMs, param (IDs::fxFeedback),
                                   param (IDs::fxModRate), param (IDs::fxModDepth), param (IDs::fxMix));
 
         // 5. filters

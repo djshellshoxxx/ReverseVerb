@@ -30,6 +30,7 @@ namespace IDs
     static const juce::String hitEnabled = "hitEnabled";
     static const juce::String fxEnabled = "fxEnabled", fxTime = "fxTime", fxFeedback = "fxFeedback";
     static const juce::String fxModRate = "fxModRate", fxModDepth = "fxModDepth", fxMix = "fxMix", fxOrder = "fxOrder";
+    static const juce::String fxSync = "fxSync", fxSyncDivision = "fxSyncDivision";
     static const juce::String gateEnabled = "gateEnabled", gateSteps = "gateSteps", gateRate = "gateRate";
     static const juce::String gateDepth = "gateDepth", gateSmooth = "gateSmooth", gateSwing = "gateSwing", gatePhase = "gatePhase";
     static const juce::String gateRetrigger = "gateRetrigger", gateTarget = "gateTarget", gateShape = "gateShape";

@@ -15,10 +15,10 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 - Transpose knob shifts the pitch of the whole rendered hit and tail by a fixed amount, independent of the existing pitch sweep
 - Built-in sample generator: synthesize a snare, hi-hat, clap, bass drum, horn, string, pluck, rimshot, triangle, or tuba one-shot to feed straight into the Rise/Fall engine
 - HIT checkbox: play the swell with no dry hit at all, or restore it at the HIT knob's level
-- Delay/chorus/echo FX: a single modulated delay line that reads as any of the three (or a blend) depending on its settings, with an Order choice that can flip its repeats backwards along with the Rise-mode reversal for a true reverse echo/delay/chorus
+- Delay/chorus/echo FX: a single modulated delay line that reads as any of the three (or a blend) depending on its settings, with an Order choice that can flip its repeats backwards along with the Rise-mode reversal for a true reverse echo/delay/chorus, plus optional tempo-sync for its time
 - Paged UI (MAIN / MOD / FX / GATOR tabs) keeps the window compact and usable at lower resolutions
 - Preset system: factory presets covering short/long, Rise/Fall, synced/free, and gated/pitch-swept starting points, plus save/recall/delete of your own presets (independent of whichever sample is loaded)
-- 16/32-step tempo-synced gator with variable step levels
+- 16/32-step tempo-synced gator with variable step levels, applied last at playback time (after Stretch/Reverb/FX/Pitch/envelopes), defaulting to gating both the hit and swell so it's always audible regardless of the source
 - Seven gate shapes: Square, Smooth, Ramp Up, Ramp Down, Triangle, Sine, and Curved
 - Gate Depth, Smooth, Swing, Phase, Note/Host retrigger, and Swell/Hit/Both targeting
 - Click/drag pattern painting and Shift-drag line drawing
