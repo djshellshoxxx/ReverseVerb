@@ -18,6 +18,8 @@ namespace IDs
     static const juce::String sync = "sync", syncLen = "syncLen", syncDivisionV2 = "syncDivisionV2";
     static const juce::String direction = "direction";
     static const juce::String pitch = "pitch", pitchRange = "pitchRange", pitchTension = "pitchTension";
+    static const juce::String transpose = "transpose";
+    static const juce::String bpmSync = "bpmSync", manualBpm = "manualBpm";
     static const juce::String volStart = "volStart", volEnd = "volEnd", volTension = "volTension";
     static const juce::String gateEnabled = "gateEnabled", gateSteps = "gateSteps", gateRate = "gateRate";
     static const juce::String gateDepth = "gateDepth", gateSmooth = "gateSmooth", gateSwing = "gateSwing", gatePhase = "gatePhase";
@@ -106,6 +108,17 @@ public:
     float param (const juce::String& id) const { return apvts.getRawParameterValue (id)->load(); }
     void setParam (const juce::String& id, float value);
 
+    // MIDI CC learn: a host-independent way to map any parameter to an incoming
+    // MIDI CC, since the host's own parameter-context-menu automation extension
+    // (used above via getHostContext()) is host-dependent and unavailable in
+    // Standalone. Real-time-safe: the audio thread is the only writer.
+    static constexpr int numMidiCCs = 128;
+    void armMidiLearn (int parameterIndex) noexcept { midiLearnArmedParamIndex = parameterIndex; }
+    void clearMidiLearn() noexcept { midiLearnArmedParamIndex = -1; }
+    int getMidiLearnArmedParamIndex() const noexcept { return midiLearnArmedParamIndex.load(); }
+    int getMidiCCForParameter (int parameterIndex) const noexcept;
+    void clearMidiMapping (int parameterIndex) noexcept;
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:
@@ -154,6 +167,10 @@ private:
     rv::TimeSignature lastRenderTimeSignature {};
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
+
+    std::atomic<int> midiLearnArmedParamIndex { -1 };
+    std::array<std::atomic<int>, numMidiCCs> ccToParamIndex;
+    void handleIncomingMidiCC (const juce::MidiMessage&) noexcept;
 
     std::array<Voice, 8> voices;
     juce::uint32 voiceCounter = 0;

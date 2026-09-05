@@ -18,14 +18,17 @@ juce::Colour RVColours::swellColour (float toneHz, float bassCutHz)
 // Shared by every Host* control below plus the waveform's trim handles and the
 // pitch tension box, so any control bound to a host parameter can expose
 // whatever the host's own parameter context-menu extension provides (VST3
-// hosts that implement it may add commands such as "Create automation clip"),
-// plus a plain Reset to default.
+// hosts that implement it may add commands such as "Create automation clip";
+// note this is entirely host-controlled and is always empty in Standalone,
+// since there's no host to provide it), plus MIDI Learn (works everywhere,
+// regardless of host support) and a plain Reset to default.
 
 namespace
 {
 void showHostParameterMenu (juce::Component& target,
                             juce::AudioProcessorEditor* editor,
-                            juce::AudioProcessorParameter* parameter)
+                            juce::AudioProcessorParameter* parameter,
+                            ReverseVerbProcessor* proc)
 {
     juce::PopupMenu menu;
 
@@ -36,6 +39,20 @@ void showHostParameterMenu (juce::Component& target,
 
     if (menu.getNumItems() > 0)
         menu.addSeparator();
+
+    if (proc != nullptr && parameter != nullptr)
+    {
+        const auto paramIndex = parameter->getParameterIndex();
+        const auto armed = proc->getMidiLearnArmedParamIndex() == paramIndex;
+        const auto mappedCC = proc->getMidiCCForParameter (paramIndex);
+
+        menu.addItem (armed ? "Waiting for a MIDI CC..." : "MIDI Learn", ! armed, false,
+                      [proc, paramIndex] { proc->armMidiLearn (paramIndex); });
+        if (mappedCC >= 0)
+            menu.addItem ("Clear MIDI Mapping (CC " + juce::String (mappedCC) + ")", true, false,
+                          [proc, paramIndex] { proc->clearMidiMapping (paramIndex); });
+        menu.addSeparator();
+    }
 
     menu.addItem ("Reset to default", parameter != nullptr, false,
                   [safeTarget = juce::Component::SafePointer<juce::Component> (&target), parameter]
@@ -520,7 +537,7 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
         if (const auto* paramId = paramIdFor (hover))
             if (auto* parameter = proc.apvts.getParameter (*paramId))
             {
-                showHostParameterMenu (*this, editor, parameter);
+                showHostParameterMenu (*this, editor, parameter, &proc);
                 return;
             }
     }
@@ -580,7 +597,7 @@ void TensionBox::mouseDown (const juce::MouseEvent& e)
     {
         if (auto* parameter = proc.apvts.getParameter (paramId))
         {
-            showHostParameterMenu (*this, editor, parameter);
+            showHostParameterMenu (*this, editor, parameter, &proc);
             return;
         }
     }
@@ -689,9 +706,11 @@ SWELL
 SYNC
   SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-16 bar lengths from 1/64T upward.
   With SYNC off, the free LENGTH knob stretches the tail up to 64 seconds.
+  TEMPO: HOST BPM follows the DAW's tempo. Turn it off to set your own BPM with the knob next to it (also used by Standalone, or to deliberately decouple from the host).
 
 PITCH
   PITCH sweeps the pitch from 0 at the start to the knob amount at the end. Range chooses 1, 2 or 4 octaves. CURVE box: drag up/down to change how fast the sweep happens.
+  TRANSPOSE shifts the pitch of the whole rendered hit and tail by a fixed amount (+/-48 semitones), on top of the sweep above - use it to simply tune the sample up or down.
 
 MIX
   HIT: level of the dry hit.  SWELL: level of the wet rise or fall.
@@ -702,6 +721,11 @@ GATOR
   NOTE restarts the pattern for every hit. HOST locks it to the DAW PPQ timeline and falls back to NOTE when the host supplies no PPQ.
   TARGET gates the SWELL, HIT, or BOTH layers. SHAPE chooses Square, Smooth, Ramp Up/Down, Triangle, Sine, or Curved movement inside each step.
   CLEAR, FILL, INVERT, RANDOM, rotate, COPY/PASTE, and UNDO/REDO edit the pattern without interrupting audio.
+  If the gator ever seems stuck, RESET EDITS restores it (and every edit) to a known-working state.
+
+MIDI LEARN
+  Right-click any knob, toggle, or dropdown for "MIDI Learn", then move a control on your MIDI keyboard/controller to map it - this works in every host and in Standalone, since it doesn't depend on host support.
+  A host's own automation commands may also appear in that same right-click menu above MIDI Learn, but only in DAWs that implement that VST3 extension; it is never available in Standalone.
 )";
 
 HelpOverlay::HelpOverlay()
@@ -736,10 +760,12 @@ void HelpOverlay::resized()
 }
 
 void HostContextSlider::setHostParameter (juce::AudioProcessorEditor& owner,
-                                          juce::AudioProcessorParameter& hostParameter)
+                                          juce::AudioProcessorParameter& hostParameter,
+                                          ReverseVerbProcessor& processor)
 {
     editor = &owner;
     parameter = &hostParameter;
+    proc = &processor;
 }
 
 void HostContextSlider::mouseDown (const juce::MouseEvent& e)
@@ -750,14 +776,16 @@ void HostContextSlider::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    showHostParameterMenu (*this, editor, parameter);
+    showHostParameterMenu (*this, editor, parameter, proc);
 }
 
 void HostContextComboBox::setHostParameter (juce::AudioProcessorEditor& owner,
-                                            juce::AudioProcessorParameter& hostParameter)
+                                            juce::AudioProcessorParameter& hostParameter,
+                                            ReverseVerbProcessor& processor)
 {
     editor = &owner;
     parameter = &hostParameter;
+    proc = &processor;
 }
 
 void HostContextComboBox::mouseDown (const juce::MouseEvent& e)
@@ -768,14 +796,16 @@ void HostContextComboBox::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    showHostParameterMenu (*this, editor, parameter);
+    showHostParameterMenu (*this, editor, parameter, proc);
 }
 
 void HostContextToggleButton::setHostParameter (juce::AudioProcessorEditor& owner,
-                                                juce::AudioProcessorParameter& hostParameter)
+                                                juce::AudioProcessorParameter& hostParameter,
+                                                ReverseVerbProcessor& processor)
 {
     editor = &owner;
     parameter = &hostParameter;
+    proc = &processor;
 }
 
 void HostContextToggleButton::mouseDown (const juce::MouseEvent& e)
@@ -785,7 +815,7 @@ void HostContextToggleButton::mouseDown (const juce::MouseEvent& e)
         juce::ToggleButton::mouseDown (e);
         return;
     }
-    showHostParameterMenu (*this, editor, parameter);
+    showHostParameterMenu (*this, editor, parameter, proc);
 }
 
 // ---------------- Gator pattern editor ----------------
@@ -1039,14 +1069,19 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     directionAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::direction, directionCombo);
     alignAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
     syncAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync, syncToggle);
+    addAndMakeVisible (bpmSyncToggle);
+    bpmSyncToggle.setTooltip ("On: follow the host's tempo. Off: use the BPM knob instead. Right-click for host automation.");
+    bpmSyncAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::bpmSync, bpmSyncToggle);
+    if (auto* parameter = proc.apvts.getParameter (IDs::bpmSync))
+        bpmSyncToggle.setHostParameter (*this, *parameter, proc);
     for (const auto& binding : std::initializer_list<std::pair<HostContextComboBox*, const juce::String*>> {
              { &syncCombo, &IDs::syncDivisionV2 }, { &rangeCombo, &IDs::pitchRange } })
         if (auto* parameter = proc.apvts.getParameter (*binding.second))
-            binding.first->setHostParameter (*this, *parameter);
+            binding.first->setHostParameter (*this, *parameter, proc);
     for (const auto& binding : std::initializer_list<std::pair<HostContextToggleButton*, const juce::String*>> {
              { &alignToggle, &IDs::align }, { &syncToggle, &IDs::sync } })
         if (auto* parameter = proc.apvts.getParameter (*binding.second))
-            binding.first->setHostParameter (*this, *parameter);
+            binding.first->setHostParameter (*this, *parameter, proc);
 
     gateStepsCombo.addItemList ({ "16", "32" }, 1);
     for (const auto division : rv::gateRateDivisions)
@@ -1091,14 +1126,14 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
              { &gateRetriggerCombo, &IDs::gateRetrigger }, { &gateTargetCombo, &IDs::gateTarget },
              { &gateShapeCombo, &IDs::gateShape } })
         if (auto* parameter = proc.apvts.getParameter (*binding.second))
-            binding.first->setHostParameter (*this, *parameter);
+            binding.first->setHostParameter (*this, *parameter, proc);
     if (auto* parameter = proc.apvts.getParameter (IDs::gateEnabled))
-        gateToggle.setHostParameter (*this, *parameter);
+        gateToggle.setHostParameter (*this, *parameter, proc);
 
     directionCombo.setTitle ("Reverb direction");
     directionCombo.setTooltip ("RISE: reversed wet swell before the hit. FALL: dry hit followed by forward reverb.");
     if (auto* parameter = proc.apvts.getParameter (IDs::direction))
-        directionCombo.setHostParameter (*this, *parameter);
+        directionCombo.setHostParameter (*this, *parameter, proc);
 
     rangeLabel.setText ("RANGE", juce::dontSendNotification);
     rangeLabel.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
@@ -1110,6 +1145,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     nextButton.onClick   = [this] { proc.nextSample(); };
     playButton.onClick   = [this] { proc.triggerPreview(); };
     resetButton.onClick  = [this] { proc.resetEdits(); };
+    resetButton.setTooltip ("Clears trim, pitch, transpose and the volume envelope, and restores the gator to its factory-default, known-good state.");
     randomButton.onClick = [this] { proc.randomizeReverb(); };
     helpButton.onClick   = [this] { help.setVisible (true); help.toFront (true); };
     gateClear.onClick = [this] { proc.clearGatePattern(); };
@@ -1175,12 +1211,16 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kBass = &makeKnob (IDs::basscut, "BASS CUT");
     kDry = &makeKnob (IDs::dry, "HIT");          kWet = &makeKnob (IDs::wet, "SWELL");
     kPitch = &makeKnob (IDs::pitch, "PITCH");
+    kTranspose = &makeKnob (IDs::transpose, "TRANSPOSE");
     kVolStart = &makeKnob (IDs::volStart, "START"); kVolEnd = &makeKnob (IDs::volEnd, "END"); kVolTension = &makeKnob (IDs::volTension, "TENSION");
     kGateDepth = &makeKnob (IDs::gateDepth, "DEPTH");
     kGateSmooth = &makeKnob (IDs::gateSmooth, "SMOOTH");
     kGateSwing = &makeKnob (IDs::gateSwing, "SWING");
     kGatePhase = &makeKnob (IDs::gatePhase, "PHASE");
+    kBpm = &makeKnob (IDs::manualBpm, "BPM");
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, hitCol);
+    kTranspose->slider.setTooltip ("Transposes the whole rendered hit and tail by a fixed amount, independent of the PITCH sweep above. Right-click for host automation.");
+    kBpm->slider.setTooltip ("Manual tempo used when HOST BPM is off. Right-click for host automation.");
 
     addChildComponent (help);
     setResizable (true, true);
@@ -1197,7 +1237,7 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
     auto k = std::make_unique<Knob>();
     auto& s = k->slider;
     if (auto* parameter = proc.apvts.getParameter (id))
-        s.setHostParameter (*this, *parameter);
+        s.setHostParameter (*this, *parameter, proc);
     else
         jassertfalse;
     s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -1332,6 +1372,9 @@ void ReverseVerbEditor::timerCallback()
     gateUndo.setEnabled (proc.getUndoManager().canUndo());
     gateRedo.setEnabled (proc.getUndoManager().canRedo());
     presetDeleteButton.setEnabled (presetCombo.getSelectedId() > (int) rv::factoryPresets().size());
+    const bool bpmHostSynced = proc.param (IDs::bpmSync) > 0.5f;
+    kBpm->slider.setEnabled (! bpmHostSynced);
+    kBpm->slider.setAlpha (bpmHostSynced ? 0.4f : 1.0f);
 }
 
 void ReverseVerbEditor::paint (juce::Graphics& g)
@@ -1475,20 +1518,27 @@ void ReverseVerbEditor::resized()
     auto rowB = area;
 
     const int wA = rowA.getWidth();
-    layoutKnobs (group (rowA, wA, "REVERB"), { kSize, kDecay, kDamp, kDiff, kEr, kSep, kWidth, kGap });
+    const int tempoWidth = 130;
+    layoutKnobs (group (rowA, wA - tempoWidth - 8, "REVERB"), { kSize, kDecay, kDamp, kDiff, kEr, kSep, kWidth, kGap });
+    auto tempoArea = group (rowA, tempoWidth, "TEMPO");
+    {
+        bpmSyncToggle.setBounds (tempoArea.removeFromTop (18));
+        tempoArea.removeFromTop (4);
+        layoutKnobs (tempoArea, { kBpm });
+    }
 
     const int total = rowB.getWidth() - 8 * 3;
     const int unit = total / 11;
     layoutKnobs (group (rowB, unit * 4, "SWELL"), { kTail, kShape, kTone, kBass });
     layoutKnobs (group (rowB, unit * 2, "MIX"), { kDry, kWet });
-    auto pitchArea = group (rowB, unit * 2 + 30, "PITCH");
+    auto pitchArea = group (rowB, unit * 3 + 30, "PITCH");
     {
         auto right = pitchArea.removeFromRight (74);
         rangeLabel.setBounds (right.removeFromTop (14));
         rangeCombo.setBounds (right.removeFromTop (26).reduced (2, 0));
         right.removeFromTop (6);
         pitchTension.setBounds (right.withSizeKeepingCentre (64, juce::jmin (64, right.getHeight())));
-        layoutKnobs (pitchArea, { kPitch });
+        layoutKnobs (pitchArea, { kPitch, kTranspose });
     }
     layoutKnobs (group (rowB, rowB.getWidth(), "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
 }

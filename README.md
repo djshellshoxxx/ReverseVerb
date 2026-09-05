@@ -11,6 +11,8 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 - Fine sync divisions from 1/64 triplet through sixteen bars, including straight, triplet, and dotted values
 - A free (unsynced) Length knob that stretches the tail up to 64 seconds
 - Time-signature-aware bars and waveform grids using the host BPM and meter
+- BPM can follow the host or be set manually with the HOST BPM toggle and BPM knob (useful in Standalone or to deliberately decouple from the host)
+- Transpose knob shifts the pitch of the whole rendered hit and tail by a fixed amount, independent of the existing pitch sweep
 - Built-in sample generator: synthesize a snare, hi-hat, or clap one-shot to feed straight into the Rise/Fall engine
 - Preset system: factory presets covering short/long, Rise/Fall, synced/free, and gated/pitch-swept starting points, plus save/recall/delete of your own presets (independent of whichever sample is loaded)
 - 16/32-step tempo-synced gator with variable step levels
@@ -34,6 +36,8 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 - Hit on note (PDC) so the dry hit lands exactly on the MIDI note
 - Live readout of time, pitch and volume during playback
 - Host-aware controls: right-click any knob, toggle, dropdown, waveform trim handle, or the pitch tension box for DAW automation commands where supported, plus Reset to default
+- MIDI CC Learn on every control (right-click > MIDI Learn), independent of host support - works identically in every DAW and in Standalone
+- RESET EDITS restores trim, pitch, transpose, and the volume envelope, and returns the gator to its known-good factory defaults
 - Drag-to-DAW, WAV export, random reverb, built-in help (`?`)
 
 ## Reproducible developer build

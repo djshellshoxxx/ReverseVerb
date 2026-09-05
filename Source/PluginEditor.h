@@ -120,35 +120,38 @@ private:
 class HostContextSlider : public juce::Slider
 {
 public:
-    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&);
+    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&, ReverseVerbProcessor&);
     void mouseDown (const juce::MouseEvent&) override;
 
 private:
     juce::AudioProcessorEditor* editor = nullptr;
     juce::AudioProcessorParameter* parameter = nullptr;
+    ReverseVerbProcessor* proc = nullptr;
 };
 
 class HostContextComboBox : public juce::ComboBox
 {
 public:
-    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&);
+    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&, ReverseVerbProcessor&);
     void mouseDown (const juce::MouseEvent&) override;
 
 private:
     juce::AudioProcessorEditor* editor = nullptr;
     juce::AudioProcessorParameter* parameter = nullptr;
+    ReverseVerbProcessor* proc = nullptr;
 };
 
 class HostContextToggleButton : public juce::ToggleButton
 {
 public:
     using juce::ToggleButton::ToggleButton;
-    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&);
+    void setHostParameter (juce::AudioProcessorEditor&, juce::AudioProcessorParameter&, ReverseVerbProcessor&);
     void mouseDown (const juce::MouseEvent&) override;
 
 private:
     juce::AudioProcessorEditor* editor = nullptr;
     juce::AudioProcessorParameter* parameter = nullptr;
+    ReverseVerbProcessor* proc = nullptr;
 };
 
 class GatePatternEditor : public juce::Component, private juce::Timer
@@ -218,6 +221,8 @@ private:
     void promptSavePreset();
     void promptDeletePreset();
     HostContextToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
+    HostContextToggleButton bpmSyncToggle { "HOST BPM" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bpmSyncAtt;
     HostContextToggleButton gateToggle { "GATOR" };
     HostContextComboBox syncCombo, rangeCombo;
     HostContextComboBox directionCombo, gateStepsCombo, gateRateCombo, gateRetriggerCombo, gateTargetCombo, gateShapeCombo;
@@ -238,8 +243,8 @@ private:
 
     std::vector<std::unique_ptr<Knob>> knobs;
     Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass,
-         *kDry, *kWet, *kPitch, *kVolStart, *kVolEnd, *kVolTension,
-         *kGateDepth, *kGateSmooth, *kGateSwing, *kGatePhase;
+         *kDry, *kWet, *kPitch, *kTranspose, *kVolStart, *kVolEnd, *kVolTension,
+         *kGateDepth, *kGateSmooth, *kGateSwing, *kGatePhase, *kBpm;
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;
 
