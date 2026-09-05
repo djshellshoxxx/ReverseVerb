@@ -1,5 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
+#include "Envelope.h"
+#include "EnvelopeState.h"
 #include "GateEngine.h"
 #include "GatePatternState.h"
 #include "GatedMixer.h"
@@ -21,6 +23,10 @@ namespace IDs
     static const juce::String transpose = "transpose";
     static const juce::String bpmSync = "bpmSync", manualBpm = "manualBpm";
     static const juce::String volStart = "volStart", volEnd = "volEnd", volTension = "volTension";
+    static const juce::String panStart = "panStart", panEnd = "panEnd", panTension = "panTension";
+    static const juce::String stretch = "stretch";
+    static const juce::String outputGain = "outputGain";
+    static const juce::String lfoRate = "lfoRate", lfoDepth = "lfoDepth", lfoShape = "lfoShape", lfoTarget = "lfoTarget";
     static const juce::String gateEnabled = "gateEnabled", gateSteps = "gateSteps", gateRate = "gateRate";
     static const juce::String gateDepth = "gateDepth", gateSmooth = "gateSmooth", gateSwing = "gateSwing", gatePhase = "gatePhase";
     static const juce::String gateRetrigger = "gateRetrigger", gateTarget = "gateTarget", gateShape = "gateShape";
@@ -87,6 +93,11 @@ public:
     void resetEdits();
     void randomizeReverb();
     std::shared_ptr<const rv::GatePattern> getGatePattern() const;
+    std::shared_ptr<const rv::Envelope> getVolumeEnvelope() const;
+    std::shared_ptr<const rv::Envelope> getPanEnvelope() const;
+    void replaceVolumeEnvelope (const rv::Envelope&, const juce::String& transactionName = "Edit volume envelope");
+    void replacePanEnvelope (const rv::Envelope&, const juce::String& transactionName = "Edit pan envelope");
+    void normalize();
     void setGateStep (int step, float value, const juce::String& transactionName = "Edit gate step");
     void replaceGatePattern (const rv::GatePattern&, const juce::String& transactionName = "Edit gate pattern");
     void clearGatePattern();
@@ -156,6 +167,11 @@ private:
 
     std::shared_ptr<const RenderedSample> rendered;
     std::shared_ptr<const rv::GatePattern> gatePattern;
+    std::shared_ptr<const rv::Envelope> volumeEnvelope, panEnvelope;
+    void publishVolumeEnvelope (const rv::Envelope&);
+    void publishPanEnvelope (const rv::Envelope&);
+    void storeVolumeEnvelopeInState (const rv::Envelope&, juce::UndoManager*);
+    void storePanEnvelopeInState (const rv::Envelope&, juce::UndoManager*);
 
     std::atomic<double> hostSampleRate { 44100.0 };
     std::atomic<double> hostBpm { 120.0 };

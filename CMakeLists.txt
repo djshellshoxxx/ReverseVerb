@@ -42,7 +42,10 @@ target_sources(ReverseVerb PRIVATE
     Source/MusicalTime.cpp
     Source/RenderedSample.cpp
     Source/SampleGenerator.cpp
-    Source/PresetManager.cpp)
+    Source/PresetManager.cpp
+    Source/Envelope.cpp
+    Source/EnvelopeState.cpp
+    Source/TimeStretch.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
     JUCE_WEB_BROWSER=0

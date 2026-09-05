@@ -30,14 +30,19 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 - Swell shaping: length, shape curve, color (low pass), bass cut (high pass)
 - Waveform colour reacts to the Color and Bass Cut knobs; the SPACE panel shows a wireframe that reflects diffusion / size / decay
 - Click the waveform to play; drag to trim start / end (cut the hit off for a pure swell)
-- Volume envelope with tension, drawn over the waveform (FL automation style)
+- Volume and Pan envelopes with tension and multiple points, drawn over the waveform (FL automation style)
 - Pitch sweep with 1 / 2 / 4 octave range and tension curve
 - Sync total length to the host BPM and time signature, with musical grid lines on the waveform
 - Hit on note (PDC) so the dry hit lands exactly on the MIDI note
 - Live readout of time, pitch and volume during playback
 - Host-aware controls: right-click any knob, toggle, dropdown, waveform trim handle, or the pitch tension box for DAW automation commands where supported, plus Reset to default
 - MIDI CC Learn on every control (right-click > MIDI Learn), independent of host support - works identically in every DAW and in Standalone
-- RESET EDITS restores trim, pitch, transpose, and the volume envelope, and returns the gator to its known-good factory defaults
+- RESET EDITS restores trim, pitch, transpose, stretch, and the volume/pan envelopes (the gator is untouched)
+- NORMALIZE sets Output Gain so the current mix peaks just under 0 dB
+- Global UNDO/REDO across every control - knobs, toggles, envelope points, and the gator
+- Stretch knob: granular time-stretch (up to 64x, pitch preserved) of the loaded sample itself, for full-length psytrance/trance-style risers and fallers rather than just a long reverb tail
+- Volume and Pan envelopes, each with Start/End/Tension knobs plus up to 7 extra hand-placed points, drawn directly on the waveform (drag the line to add a point, double-click a point to remove it)
+- LFO with Rate, Depth, and a round-to-square Shape control, modulating either the Volume or Pan envelope
 - Drag-to-DAW, WAV export, random reverb, built-in help (`?`)
 
 ## Reproducible developer build

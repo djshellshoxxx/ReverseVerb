@@ -288,6 +288,28 @@ float WaveformDisplay::volY (float level) const
     return p.getBottom() - level * p.getHeight();
 }
 
+float WaveformDisplay::panY (float pan) const
+{
+    auto p = plot();
+    return p.getBottom() - (pan * 0.5f + 0.5f) * p.getHeight();
+}
+
+float WaveformDisplay::volLevelAt (float t) const
+{
+    const auto env = proc.getVolumeEnvelope();
+    const rv::Envelope empty;
+    return rv::envelopeValueAt (env != nullptr ? *env : empty, t,
+                                 proc.param (IDs::volStart), proc.param (IDs::volEnd), proc.param (IDs::volTension));
+}
+
+float WaveformDisplay::panLevelAt (float t) const
+{
+    const auto env = proc.getPanEnvelope();
+    const rv::Envelope empty;
+    return rv::envelopeValueAt (env != nullptr ? *env : empty, t,
+                                 proc.param (IDs::panStart), proc.param (IDs::panEnd), proc.param (IDs::panTension));
+}
+
 void WaveformDisplay::timerCallback()
 {
     auto r = proc.getRendered();
@@ -423,14 +445,17 @@ void WaveformDisplay::paint (juce::Graphics& g)
         g.fillPath (dl);
     }
 
-    // volume envelope line
+    // volume envelope line (may carry extra hand-placed points beyond Start/End)
     const float v0 = proc.param (IDs::volStart), v1 = proc.param (IDs::volEnd), vt = proc.param (IDs::volTension);
+    const auto volEnvPtr = proc.getVolumeEnvelope();
+    const rv::Envelope emptyEnvelope;
+    const auto& volE = volEnvPtr != nullptr ? *volEnvPtr : emptyEnvelope;
     juce::Path vol;
     const int steps = 64;
     for (int i = 0; i <= steps; ++i)
     {
         const float x = (float) i / (float) steps;
-        const float lvl = v0 + (v1 - v0) * tensionCurve (x, vt);
+        const float lvl = rv::envelopeValueAt (volE, x, v0, v1, vt);
         const juce::Point<float> pt (p.getX() + p.getWidth() * x, volY (lvl));
         if (i == 0) vol.startNewSubPath (pt); else vol.lineTo (pt);
     }
@@ -449,6 +474,51 @@ void WaveformDisplay::paint (juce::Graphics& g)
     handle ({ p.getX(), volY (v0) }, hover == Drag::volStart || drag == Drag::volStart, false);
     handle ({ p.getRight(), volY (v1) }, hover == Drag::volEnd || drag == Drag::volEnd, false);
     handle ({ p.getCentreX(), volY (v0 + (v1 - v0) * tensionCurve (0.5f, vt)) }, hover == Drag::volTension || drag == Drag::volTension, true);
+    for (int i = 0; i < volE.numInterior; ++i)
+    {
+        const auto& pt = volE.interior[(size_t) i];
+        handle ({ p.getX() + p.getWidth() * pt.pos, volY (pt.value) },
+                (hover == Drag::volPoint && hoverPointIndex == i) || (drag == Drag::volPoint && dragPointIndex == i), false);
+    }
+
+    // pan envelope line - a second curve through the middle of the waveform,
+    // -1 (hard left) at the bottom, 0 (centre) at the vertical middle, +1 (hard right) at the top
+    const float pan0 = proc.param (IDs::panStart), pan1 = proc.param (IDs::panEnd), pant = proc.param (IDs::panTension);
+    const auto panEnvPtr = proc.getPanEnvelope();
+    const auto& panE = panEnvPtr != nullptr ? *panEnvPtr : emptyEnvelope;
+    juce::Path pan;
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float x = (float) i / (float) steps;
+        const float pv = rv::envelopeValueAt (panE, x, pan0, pan1, pant);
+        const juce::Point<float> pt (p.getX() + p.getWidth() * x, panY (pv));
+        if (i == 0) pan.startNewSubPath (pt); else pan.lineTo (pt);
+    }
+    g.setColour (juce::Colour (0xffff6bd6).withAlpha (0.22f));
+    g.strokePath (pan, juce::PathStrokeType (3.0f));
+    g.setColour (juce::Colour (0xffff6bd6).withAlpha (0.85f));
+    juce::PathStrokeType panStroke (1.2f);
+    float panDash[] = { 4.0f, 3.0f };
+    juce::Path dashedPan;
+    panStroke.createDashedStroke (dashedPan, pan, panDash, 2);
+    g.fillPath (dashedPan);
+    auto panHandle = [&] (juce::Point<float> c, bool hot, bool square)
+    {
+        const float s = hot ? 6.0f : 4.5f;
+        g.setColour (hot ? juce::Colour (0xffff6bd6) : juce::Colour (0xffff6bd6).withAlpha (0.85f));
+        if (square) g.fillRect (c.x - s, c.y - s, s * 2.0f, s * 2.0f); else { juce::Path d; d.addPolygon (c, 4, s, juce::MathConstants<float>::pi * 0.25f); g.fillPath (d); }
+        g.setColour (bg);
+        if (square) g.drawRect (c.x - s, c.y - s, s * 2.0f, s * 2.0f, 1.0f); else { juce::Path d; d.addPolygon (c, 4, s, juce::MathConstants<float>::pi * 0.25f); g.strokePath (d, juce::PathStrokeType (1.0f)); }
+    };
+    panHandle ({ p.getX(), panY (pan0) }, hover == Drag::panStart || drag == Drag::panStart, false);
+    panHandle ({ p.getRight(), panY (pan1) }, hover == Drag::panEnd || drag == Drag::panEnd, false);
+    panHandle ({ p.getCentreX(), panY (pan0 + (pan1 - pan0) * tensionCurve (0.5f, pant)) }, hover == Drag::panTension || drag == Drag::panTension, true);
+    for (int i = 0; i < panE.numInterior; ++i)
+    {
+        const auto& pt = panE.interior[(size_t) i];
+        panHandle ({ p.getX() + p.getWidth() * pt.pos, panY (pt.value) },
+                   (hover == Drag::panPoint && hoverPointIndex == i) || (drag == Drag::panPoint && dragPointIndex == i), false);
+    }
 
     // trim handles
     g.setColour (hover == Drag::trimStart || drag == Drag::trimStart ? accent : textDim);
@@ -495,25 +565,52 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.drawText (right, getWidth() / 2, by, getWidth() / 2 - 12, bh, juce::Justification::centredRight);
     g.setFont (juce::Font (juce::FontOptions (9.5f)));
     g.setColour (textDim.withAlpha (0.7f));
-    g.drawText ("click = play    drag = trim    dots = volume    right-click = automation", 0, 2, getWidth(), 12, juce::Justification::centred);
+    g.drawText ("click = play    drag = trim    dots = volume    diamonds = pan    drag the line to add a point    right-click = automation", 0, 2, getWidth(), 12, juce::Justification::centred);
 }
 
 void WaveformDisplay::mouseMove (const juce::MouseEvent& e)
 {
     Drag h = Drag::none;
+    int pointIndex = -1;
     if (total > 0)
     {
         auto p = plot();
         const float v0 = proc.param (IDs::volStart), v1 = proc.param (IDs::volEnd), vt = proc.param (IDs::volTension);
-        const juce::Point<float> ps (p.getX(), volY (v0)), pe (p.getRight(), volY (v1)), pm (p.getCentreX(), volY (v0 + (v1 - v0) * tensionCurve (0.5f, vt)));
-        if (e.position.getDistanceFrom (ps) < 10.0f) h = Drag::volStart;
-        else if (e.position.getDistanceFrom (pe) < 10.0f) h = Drag::volEnd;
-        else if (e.position.getDistanceFrom (pm) < 10.0f) h = Drag::volTension;
-        else if (e.x < p.getX() + 14.0f) h = Drag::trimStart;
-        else h = Drag::trimEnd;
+        const float pan0 = proc.param (IDs::panStart), pan1 = proc.param (IDs::panEnd), pant = proc.param (IDs::panTension);
+        const auto volEnvPtr = proc.getVolumeEnvelope();
+        const auto panEnvPtr = proc.getPanEnvelope();
+        const rv::Envelope empty;
+        const auto& volE = volEnvPtr != nullptr ? *volEnvPtr : empty;
+        const auto& panE = panEnvPtr != nullptr ? *panEnvPtr : empty;
+        const juce::Point<float> vs (p.getX(), volY (v0)), ve (p.getRight(), volY (v1)), vm (p.getCentreX(), volY (v0 + (v1 - v0) * tensionCurve (0.5f, vt)));
+        const juce::Point<float> ps (p.getX(), panY (pan0)), pe (p.getRight(), panY (pan1)), pm (p.getCentreX(), panY (pan0 + (pan1 - pan0) * tensionCurve (0.5f, pant)));
+
+        for (int i = 0; i < volE.numInterior && h == Drag::none; ++i)
+            if (e.position.getDistanceFrom ({ p.getX() + p.getWidth() * volE.interior[(size_t) i].pos, volY (volE.interior[(size_t) i].value) }) < 9.0f)
+            { h = Drag::volPoint; pointIndex = i; }
+        for (int i = 0; i < panE.numInterior && h == Drag::none; ++i)
+            if (e.position.getDistanceFrom ({ p.getX() + p.getWidth() * panE.interior[(size_t) i].pos, panY (panE.interior[(size_t) i].value) }) < 9.0f)
+            { h = Drag::panPoint; pointIndex = i; }
+
+        if (h == Drag::none && e.position.getDistanceFrom (vs) < 10.0f) h = Drag::volStart;
+        else if (h == Drag::none && e.position.getDistanceFrom (ve) < 10.0f) h = Drag::volEnd;
+        else if (h == Drag::none && e.position.getDistanceFrom (vm) < 10.0f) h = Drag::volTension;
+        else if (h == Drag::none && e.position.getDistanceFrom (ps) < 10.0f) h = Drag::panStart;
+        else if (h == Drag::none && e.position.getDistanceFrom (pe) < 10.0f) h = Drag::panEnd;
+        else if (h == Drag::none && e.position.getDistanceFrom (pm) < 10.0f) h = Drag::panTension;
+        else if (h == Drag::none && e.x > p.getX() + 16.0f && e.x < p.getRight() - 16.0f)
+        {
+            const float t = (e.x - p.getX()) / p.getWidth();
+            if (std::abs (e.y - volY (volLevelAt (t))) < 8.0f) h = Drag::volPoint;
+            else if (std::abs (e.y - panY (panLevelAt (t))) < 8.0f) h = Drag::panPoint;
+        }
+        if (h == Drag::none)
+            h = e.x < p.getX() + 14.0f ? Drag::trimStart : Drag::trimEnd;
     }
-    if (h != hover) { hover = h; repaint(); }
-    setMouseCursor (h == Drag::volStart || h == Drag::volEnd || h == Drag::volTension ? juce::MouseCursor::UpDownResizeCursor
+    if (h != hover || pointIndex != hoverPointIndex) { hover = h; hoverPointIndex = pointIndex; repaint(); }
+    setMouseCursor (h == Drag::volStart || h == Drag::volEnd || h == Drag::volTension
+                    || h == Drag::panStart || h == Drag::panEnd || h == Drag::panTension
+                    || h == Drag::volPoint || h == Drag::panPoint ? juce::MouseCursor::UpDownResizeCursor
                     : (h == Drag::none ? juce::MouseCursor::NormalCursor : juce::MouseCursor::LeftRightResizeCursor));
 }
 
@@ -526,6 +623,11 @@ const juce::String* WaveformDisplay::paramIdFor (Drag d) const noexcept
         case Drag::volStart:   return &IDs::volStart;
         case Drag::volEnd:     return &IDs::volEnd;
         case Drag::volTension: return &IDs::volTension;
+        case Drag::panStart:   return &IDs::panStart;
+        case Drag::panEnd:     return &IDs::panEnd;
+        case Drag::panTension: return &IDs::panTension;
+        case Drag::volPoint:
+        case Drag::panPoint:
         case Drag::none:       break;
     }
     return nullptr;
@@ -544,8 +646,10 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
             }
     }
     drag = hover;
+    dragPointIndex = hoverPointIndex;
     moved = false;
     downPos = e.position;
+    auto p = plot();
     switch (drag)
     {
         case Drag::trimEnd:    downA = proc.param (IDs::trimEnd); downB = proc.param (IDs::trimStart); break;
@@ -553,6 +657,69 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
         case Drag::volStart:   downA = proc.param (IDs::volStart); break;
         case Drag::volEnd:     downA = proc.param (IDs::volEnd); break;
         case Drag::volTension: downA = proc.param (IDs::volTension); break;
+        case Drag::panStart:   downA = proc.param (IDs::panStart); break;
+        case Drag::panEnd:     downA = proc.param (IDs::panEnd); break;
+        case Drag::panTension: downA = proc.param (IDs::panTension); break;
+        case Drag::volPoint:
+        {
+            const auto current = proc.getVolumeEnvelope();
+            const rv::Envelope base = current != nullptr ? *current : rv::Envelope {};
+            if (dragPointIndex >= 0)
+            {
+                dragBaseVolEnvelope = base;
+                if (e.getNumberOfClicks() > 1)
+                {
+                    const float pos = base.interior[(size_t) dragPointIndex].pos;
+                    proc.replaceVolumeEnvelope (rv::withoutNearestInteriorPoint (base, pos), "Remove volume point");
+                    drag = Drag::none;
+                    dragPointIndex = -1;
+                    break;
+                }
+                downA = base.interior[(size_t) dragPointIndex].pos;
+                downB = base.interior[(size_t) dragPointIndex].value;
+            }
+            else
+            {
+                const float pos = juce::jlimit (0.01f, 0.99f, (downPos.x - p.getX()) / p.getWidth());
+                const float value = juce::jlimit (0.0f, 1.0f, (p.getBottom() - downPos.y) / p.getHeight());
+                const auto added = rv::withInteriorPoint (base, pos, value, 0.0f, 1.0f);
+                proc.replaceVolumeEnvelope (added, "Add volume point");
+                dragBaseVolEnvelope = added;
+                dragPointIndex = rv::nearestInteriorPoint (added, pos, value, 1.0f, 0.2f);
+                downA = pos; downB = value;
+            }
+            break;
+        }
+        case Drag::panPoint:
+        {
+            const auto current = proc.getPanEnvelope();
+            const rv::Envelope base = current != nullptr ? *current : rv::Envelope {};
+            if (dragPointIndex >= 0)
+            {
+                dragBasePanEnvelope = base;
+                if (e.getNumberOfClicks() > 1)
+                {
+                    const float pos = base.interior[(size_t) dragPointIndex].pos;
+                    proc.replacePanEnvelope (rv::withoutNearestInteriorPoint (base, pos), "Remove pan point");
+                    drag = Drag::none;
+                    dragPointIndex = -1;
+                    break;
+                }
+                downA = base.interior[(size_t) dragPointIndex].pos;
+                downB = base.interior[(size_t) dragPointIndex].value;
+            }
+            else
+            {
+                const float pos = juce::jlimit (0.01f, 0.99f, (downPos.x - p.getX()) / p.getWidth());
+                const float value = juce::jlimit (-1.0f, 1.0f, ((p.getBottom() - downPos.y) / p.getHeight() - 0.5f) * 2.0f);
+                const auto added = rv::withInteriorPoint (base, pos, value, -1.0f, 1.0f);
+                proc.replacePanEnvelope (added, "Add pan point");
+                dragBasePanEnvelope = added;
+                dragPointIndex = rv::nearestInteriorPoint (added, pos, value, 2.0f, 0.2f);
+                downA = pos; downB = value;
+            }
+            break;
+        }
         default: break;
     }
     downSpan = juce::jmax (0.01f, std::abs (downB - downA));
@@ -561,7 +728,12 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
         if (drag == Drag::volStart) proc.setParam (IDs::volStart, 1.0f);
         if (drag == Drag::volEnd) proc.setParam (IDs::volEnd, 1.0f);
         if (drag == Drag::volTension) proc.setParam (IDs::volTension, 0.0f);
-        drag = Drag::none;
+        if (drag == Drag::panStart) proc.setParam (IDs::panStart, 0.0f);
+        if (drag == Drag::panEnd) proc.setParam (IDs::panEnd, 0.0f);
+        if (drag == Drag::panTension) proc.setParam (IDs::panTension, 0.0f);
+        if (drag == Drag::volStart || drag == Drag::volEnd || drag == Drag::volTension
+            || drag == Drag::panStart || drag == Drag::panEnd || drag == Drag::panTension)
+            drag = Drag::none;
     }
 }
 
@@ -579,15 +751,39 @@ void WaveformDisplay::mouseDrag (const juce::MouseEvent& e)
         case Drag::volStart:   proc.setParam (IDs::volStart, juce::jlimit (0.0f, 1.0f, downA + ny)); break;
         case Drag::volEnd:     proc.setParam (IDs::volEnd,   juce::jlimit (0.0f, 1.0f, downA + ny)); break;
         case Drag::volTension: proc.setParam (IDs::volTension, juce::jlimit (-1.0f, 1.0f, downA + ny * 3.0f * (proc.param (IDs::volEnd) >= proc.param (IDs::volStart) ? -1.0f : 1.0f))); break;
+        case Drag::panStart:   proc.setParam (IDs::panStart, juce::jlimit (-1.0f, 1.0f, downA + ny * 2.0f)); break;
+        case Drag::panEnd:     proc.setParam (IDs::panEnd,   juce::jlimit (-1.0f, 1.0f, downA + ny * 2.0f)); break;
+        case Drag::panTension: proc.setParam (IDs::panTension, juce::jlimit (-1.0f, 1.0f, downA + ny * 3.0f * (proc.param (IDs::panEnd) >= proc.param (IDs::panStart) ? -1.0f : 1.0f))); break;
+        case Drag::volPoint:
+            if (dragPointIndex >= 0 && dragPointIndex < dragBaseVolEnvelope.numInterior)
+            {
+                auto working = dragBaseVolEnvelope;
+                working.interior[(size_t) dragPointIndex] = { juce::jlimit (0.01f, 0.99f, downA + nx),
+                                                               juce::jlimit (0.0f, 1.0f, downB + ny) };
+                proc.replaceVolumeEnvelope (working, "Edit volume point");
+            }
+            break;
+        case Drag::panPoint:
+            if (dragPointIndex >= 0 && dragPointIndex < dragBasePanEnvelope.numInterior)
+            {
+                auto working = dragBasePanEnvelope;
+                working.interior[(size_t) dragPointIndex] = { juce::jlimit (0.01f, 0.99f, downA + nx),
+                                                               juce::jlimit (-1.0f, 1.0f, downB + ny * 2.0f) };
+                proc.replacePanEnvelope (working, "Edit pan point");
+            }
+            break;
         default: break;
     }
 }
 
 void WaveformDisplay::mouseUp (const juce::MouseEvent&)
 {
-    if (! moved && drag != Drag::none && drag != Drag::volStart && drag != Drag::volEnd && drag != Drag::volTension)
+    if (! moved && drag != Drag::none && drag != Drag::volStart && drag != Drag::volEnd && drag != Drag::volTension
+        && drag != Drag::panStart && drag != Drag::panEnd && drag != Drag::panTension
+        && drag != Drag::volPoint && drag != Drag::panPoint)
         proc.triggerPreview();
     drag = Drag::none;
+    dragPointIndex = -1;
     repaint();
 }
 
@@ -686,13 +882,16 @@ WORKFLOW
   EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
   RISE puts reversed reverb before the hit. FALL puts the dry hit first and plays the forward reverb decay after the selected DELAY.
   Hit on note (PDC): in RISE, reports the dry-hit offset as latency so the hit lands exactly on the note. FALL needs no lookahead, so PDC is disabled.
-  RESET EDITS clears trim, pitch, transpose and volume envelope (leaves the gator untouched). RANDOM rolls new reverb settings.
+  RESET EDITS clears trim, pitch, transpose, stretch, and the volume/pan envelopes (leaves the gator untouched). RANDOM rolls new reverb settings.
+  NORMALIZE raises or lowers Output Gain so the current Hit/Swell mix peaks just under 0 dB. UNDO/REDO step back and forward through any change - knobs, toggles, envelope points, or the gator.
 
 WAVEFORM
   Colour follows the COLOR knob (violet = dark, cyan = bright) and turns red as BASS CUT rises.
   Drag anywhere to trim: drag right = shorter, drag left = longer. Drag near the left edge to trim the start. Trim the hit off entirely for a pure swell.
-  Volume line: drag the left / right dots up or down (bottom = -inf dB, top = 0 dB). Drag the middle square to bend the curve (tension). Double-click a dot to reset it.
-  Red lines are beats (bright = bar) when SYNC is on. Dashed line = where the dry hit begins.
+  Volume line (white): drag the left / right dots up or down (bottom = -inf dB, top = 0 dB). Drag the middle square to bend the curve (tension). Double-click a dot to reset it.
+  Pan line (pink, dashed): same idea, running through the vertical centre (centre = no pan, bottom = hard left, top = hard right).
+  Either line: click-drag anywhere along it to add a new point and move it; double-click an existing point to remove it. Up to 7 extra points each.
+  Red lines are beats (bright = bar) when SYNC is on. Dashed white line = where the dry hit begins.
   Bottom row shows length, hit position, BPM, and live time / pitch / volume while playing.
 
 REVERB
@@ -704,6 +903,7 @@ REVERB
 SWELL
   LENGTH: seconds of reverb tail (disabled when SYNC is on).  SHAPE: bends the swell envelope (negative = fuller early, positive = late rush).
   COLOR: low-pass filter on the swell.  BASS CUT: high-pass filter on the swell, keeps sub out of your break.
+  STRETCH: time-stretches the loaded sample itself, up to 64x, pitch unchanged. Unlike LENGTH (which only extends the reverb tail), this spreads the actual source material across the whole timeline - the way to build a genuine full-length riser or faller (psytrance/trance style) instead of a short hit with a long reverb hanging off it. 1x = off.
 
 SYNC
   SYNC locks the total timeline to the host tempo and time signature. Choose straight, triplet (T), dotted (D), or 1-64 bar lengths from 1/64T upward.
@@ -716,6 +916,15 @@ PITCH
 
 MIX
   HIT: level of the dry hit.  SWELL: level of the wet rise or fall.
+
+VOLUME
+  START/END set the level at the beginning and end of the timeline; TENSION bends the curve between them. Add more points directly on the waveform's volume line for multi-stage swells.
+
+PAN
+  START/END/TENSION work just like Volume's, but move the mix left/right over time instead of up/down. Add extra points on the waveform's pink pan line the same way.
+
+LFO
+  RATE (Hz) and DEPTH set the modulation speed and amount; SHAPE morphs the wave from round (sine) to square. TARGET picks whether it's Volume or Pan being modulated. DEPTH at 0 = off.
 
 GATOR
   Paint 16 or 32 step levels; hold Shift while dragging to draw a straight ramp. RATE sets each step from 1/64T to 1/4D.
@@ -978,6 +1187,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     addAndMakeVisible (countLabel);
 
     for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &helpButton,
+                     &normalizeButton, &undoButton, &redoButton,
                      &generateSnareButton, &generateHatButton, &generateClapButton })
         addAndMakeVisible (b);
     generateLabel.setText ("GENERATE", juce::dontSendNotification);
@@ -1149,6 +1359,12 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     resetButton.setTooltip ("Clears trim, pitch, transpose and the volume envelope. Does not touch the gator.");
     randomButton.onClick = [this] { proc.randomizeReverb(); };
     helpButton.onClick   = [this] { help.setVisible (true); help.toFront (true); };
+    normalizeButton.onClick = [this] { proc.normalize(); };
+    normalizeButton.setTooltip ("Raises or lowers Output Gain so the current mix peaks just under 0 dB.");
+    undoButton.onClick = [this] { proc.getUndoManager().undo(); };
+    redoButton.onClick = [this] { proc.getUndoManager().redo(); };
+    undoButton.setTooltip ("Undo the last change - any knob, toggle, envelope point, or gator edit.");
+    redoButton.setTooltip ("Redo the last undone change.");
     gateClear.onClick = [this] { proc.clearGatePattern(); };
     gateFill.onClick = [this] { proc.fillGatePattern(); };
     gateInvert.onClick = [this] { proc.invertGatePattern(); };
@@ -1210,10 +1426,13 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kWidth = &makeKnob (IDs::width, "WIDTH");    kGap = &makeKnob (IDs::gap, "DELAY");
     kTail = &makeKnob (IDs::tail, "LENGTH");     kShape = &makeKnob (IDs::shape, "SHAPE");   kTone = &makeKnob (IDs::tone, "COLOR");
     kBass = &makeKnob (IDs::basscut, "BASS CUT");
+    kStretch = &makeKnob (IDs::stretch, "STRETCH");
     kDry = &makeKnob (IDs::dry, "HIT");          kWet = &makeKnob (IDs::wet, "SWELL");
     kPitch = &makeKnob (IDs::pitch, "PITCH");
     kTranspose = &makeKnob (IDs::transpose, "TRANSPOSE");
     kVolStart = &makeKnob (IDs::volStart, "START"); kVolEnd = &makeKnob (IDs::volEnd, "END"); kVolTension = &makeKnob (IDs::volTension, "TENSION");
+    kPanStart = &makeKnob (IDs::panStart, "START"); kPanEnd = &makeKnob (IDs::panEnd, "END"); kPanTension = &makeKnob (IDs::panTension, "TENSION");
+    kLfoRate = &makeKnob (IDs::lfoRate, "RATE"); kLfoDepth = &makeKnob (IDs::lfoDepth, "DEPTH"); kLfoShape = &makeKnob (IDs::lfoShape, "SHAPE");
     kGateDepth = &makeKnob (IDs::gateDepth, "DEPTH");
     kGateSmooth = &makeKnob (IDs::gateSmooth, "SMOOTH");
     kGateSwing = &makeKnob (IDs::gateSwing, "SWING");
@@ -1222,11 +1441,25 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, hitCol);
     kTranspose->slider.setTooltip ("Transposes the whole rendered hit and tail by a fixed amount, independent of the PITCH sweep above. Right-click for host automation.");
     kBpm->slider.setTooltip ("Manual tempo used when HOST BPM is off. Right-click for host automation.");
+    kStretch->slider.setTooltip ("Time-stretches the loaded sample itself (pitch unchanged) so it can span a whole long riser or faller, not just the reverb tail. Right-click for host automation.");
+    kLfoShape->slider.setTooltip ("Morphs the LFO's wave from round (sine) to square.");
+
+    addAndMakeVisible (lfoTargetCombo);
+    lfoTargetCombo.addItemList ({ "Volume", "Pan" }, 1);
+    lfoTargetCombo.setTooltip ("What the LFO modulates.");
+    lfoTargetAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::lfoTarget, lfoTargetCombo);
+    if (auto* parameter = proc.apvts.getParameter (IDs::lfoTarget))
+        lfoTargetCombo.setHostParameter (*this, *parameter, proc);
+    lfoTargetLabel.setText ("TARGET", juce::dontSendNotification);
+    lfoTargetLabel.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    lfoTargetLabel.setJustificationType (juce::Justification::centred);
+    lfoTargetLabel.setColour (juce::Label::textColourId, textDim);
+    addAndMakeVisible (lfoTargetLabel);
 
     addChildComponent (help);
     setResizable (true, true);
-    setResizeLimits (1060, 928, 1600, 1268);
-    setSize (1180, 988);
+    setResizeLimits (1200, 1080, 1700, 1420);
+    setSize (1300, 1150);
     startTimerHz (10);
     timerCallback();
 }
@@ -1372,6 +1605,8 @@ void ReverseVerbEditor::timerCallback()
         if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col) { k->slider.setColour (juce::Slider::rotarySliderFillColourId, col); k->slider.repaint(); }
     gateUndo.setEnabled (proc.getUndoManager().canUndo());
     gateRedo.setEnabled (proc.getUndoManager().canRedo());
+    undoButton.setEnabled (proc.getUndoManager().canUndo());
+    redoButton.setEnabled (proc.getUndoManager().canRedo());
     presetDeleteButton.setEnabled (presetCombo.getSelectedId() > (int) rv::factoryPresets().size());
     const bool bpmHostSynced = proc.param (IDs::bpmSync) > 0.5f;
     kBpm->slider.setEnabled (! bpmHostSynced);
@@ -1470,7 +1705,10 @@ void ReverseVerbEditor::resized()
     exportButton.setBounds (row.removeFromLeft (100));  row.removeFromLeft (6);
     dragPad.setBounds (row.removeFromLeft (120));       row.removeFromLeft (6);
     resetButton.setBounds (row.removeFromLeft (100));   row.removeFromLeft (6);
-    randomButton.setBounds (row.removeFromLeft (80));   row.removeFromLeft (14);
+    randomButton.setBounds (row.removeFromLeft (80));   row.removeFromLeft (6);
+    normalizeButton.setBounds (row.removeFromLeft (94)); row.removeFromLeft (6);
+    undoButton.setBounds (row.removeFromLeft (56));     row.removeFromLeft (4);
+    redoButton.setBounds (row.removeFromLeft (56));     row.removeFromLeft (14);
     directionCombo.setBounds (row.removeFromLeft (86)); row.removeFromLeft (8);
     alignToggle.setBounds (row.removeFromLeft (150));   row.removeFromLeft (10);
     syncCombo.setBounds (row.removeFromRight (100));    row.removeFromRight (6);
@@ -1513,10 +1751,12 @@ void ReverseVerbEditor::resized()
     gateArea.removeFromTop (5);
     gatePatternEditor.setBounds (gateArea);
 
-    const int rowH = (area.getHeight() - 10) / 2;
+    const int rowH = (area.getHeight() - 20) / 3;
     auto rowA = area.removeFromTop (rowH);
     area.removeFromTop (10);
-    auto rowB = area;
+    auto rowB = area.removeFromTop (rowH);
+    area.removeFromTop (10);
+    auto rowC = area;
 
     const int wA = rowA.getWidth();
     const int tempoWidth = 130;
@@ -1529,10 +1769,10 @@ void ReverseVerbEditor::resized()
     }
 
     const int total = rowB.getWidth() - 8 * 3;
-    const int unit = total / 11;
-    layoutKnobs (group (rowB, unit * 4, "SWELL"), { kTail, kShape, kTone, kBass });
+    const int unit = total / 12;
+    layoutKnobs (group (rowB, unit * 5, "SWELL"), { kTail, kStretch, kShape, kTone, kBass });
     layoutKnobs (group (rowB, unit * 2, "MIX"), { kDry, kWet });
-    auto pitchArea = group (rowB, unit * 3 + 30, "PITCH");
+    auto pitchArea = group (rowB, rowB.getWidth(), "PITCH");
     {
         auto right = pitchArea.removeFromRight (74);
         rangeLabel.setBounds (right.removeFromTop (14));
@@ -1541,7 +1781,18 @@ void ReverseVerbEditor::resized()
         pitchTension.setBounds (right.withSizeKeepingCentre (64, juce::jmin (64, right.getHeight())));
         layoutKnobs (pitchArea, { kPitch, kTranspose });
     }
-    layoutKnobs (group (rowB, rowB.getWidth(), "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
+
+    const int totalC = rowC.getWidth() - 8 * 2;
+    const int unitC = totalC / 10;
+    layoutKnobs (group (rowC, unitC * 3, "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
+    layoutKnobs (group (rowC, unitC * 3, "PAN  (drag the pink diamonds)"), { kPanStart, kPanEnd, kPanTension });
+    auto lfoArea = group (rowC, rowC.getWidth(), "LFO  (modulates Volume or Pan)");
+    {
+        auto right = lfoArea.removeFromRight (74);
+        lfoTargetLabel.setBounds (right.removeFromTop (14));
+        lfoTargetCombo.setBounds (right.removeFromTop (26).reduced (2, 0));
+        layoutKnobs (lfoArea, { kLfoRate, kLfoDepth, kLfoShape });
+    }
 }
 
 bool ReverseVerbEditor::isInterestedInFileDrag (const juce::StringArray& files)

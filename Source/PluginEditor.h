@@ -54,11 +54,15 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void setEditor (juce::AudioProcessorEditor& e) noexcept { editor = &e; }
 private:
-    enum class Drag { none, trimEnd, trimStart, volStart, volEnd, volTension };
+    enum class Drag { none, trimEnd, trimStart, volStart, volEnd, volTension, volPoint,
+                       panStart, panEnd, panTension, panPoint };
     void timerCallback() override;
     void rebuild();
     juce::Rectangle<float> plot() const;
     float volY (float level) const;
+    float panY (float pan) const;
+    float volLevelAt (float t) const;
+    float panLevelAt (float t) const;
     const juce::String* paramIdFor (Drag) const noexcept;
     ReverseVerbProcessor& proc;
     juce::AudioProcessorEditor* editor = nullptr;
@@ -70,6 +74,8 @@ private:
     Drag drag = Drag::none, hover = Drag::none;
     juce::Point<float> downPos;
     float downA = 0, downB = 0, downSpan = 1;
+    int dragPointIndex = -1, hoverPointIndex = -1;
+    rv::Envelope dragBaseVolEnvelope, dragBasePanEnvelope;
     bool moved = false;
 };
 
@@ -210,6 +216,7 @@ private:
     juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
+    juce::TextButton normalizeButton { "NORMALIZE" }, undoButton { "UNDO" }, redoButton { "REDO" };
     juce::Label generateLabel;
     juce::TextButton generateSnareButton { "SNARE" }, generateHatButton { "HAT" }, generateClapButton { "CLAP" };
 
@@ -227,10 +234,12 @@ private:
     HostContextToggleButton gateToggle { "GATOR" };
     HostContextComboBox syncCombo, rangeCombo;
     HostContextComboBox directionCombo, gateStepsCombo, gateRateCombo, gateRetriggerCombo, gateTargetCombo, gateShapeCombo;
+    HostContextComboBox lfoTargetCombo;
+    juce::Label lfoTargetLabel;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt,
                                                                             gateStepsAtt, gateRateAtt, gateRetriggerAtt,
-                                                                            gateTargetAtt, gateShapeAtt;
+                                                                            gateTargetAtt, gateShapeAtt, lfoTargetAtt;
     juce::TextButton gateClear { "CLEAR" }, gateFill { "FILL" }, gateInvert { "INVERT" }, gateRandom { "RANDOM" },
                      gateLeft { "<" }, gateRight { ">" }, gateCopy { "COPY" }, gatePaste { "PASTE" },
                      gateUndo { "UNDO" }, gateRedo { "REDO" };
@@ -243,8 +252,10 @@ private:
     HelpOverlay help;
 
     std::vector<std::unique_ptr<Knob>> knobs;
-    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass,
+    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kStretch, *kShape, *kTone, *kBass,
          *kDry, *kWet, *kPitch, *kTranspose, *kVolStart, *kVolEnd, *kVolTension,
+         *kPanStart, *kPanEnd, *kPanTension,
+         *kLfoRate, *kLfoDepth, *kLfoShape,
          *kGateDepth, *kGateSmooth, *kGateSwing, *kGatePhase, *kBpm;
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;

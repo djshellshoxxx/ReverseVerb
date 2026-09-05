@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "TimeStretch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -158,7 +159,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::volStart,     "Vol Start",     R { 0.0f, 1.0f, 0.001f }, 1.0f);
     add (IDs::volEnd,       "Vol End",       R { 0.0f, 1.0f, 0.001f }, 1.0f);
     add (IDs::volTension,   "Vol Tension",   R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::panStart,     "Pan Start",     R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::panEnd,       "Pan End",       R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::panTension,   "Pan Tension",   R { -1.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::stretch,      "Stretch",       R { 1.0f, 64.0f, 0.001f, 0.25f }, 1.0f, "x");
+    add (IDs::outputGain,   "Output Gain",   R { -24.0f, 24.0f, 0.01f }, 0.0f, "dB");
+    add (IDs::lfoRate,      "LFO Rate",      R { 0.02f, 20.0f, 0.001f, 0.3f }, 2.0f, "Hz");
+    add (IDs::lfoDepth,     "LFO Depth",     R { 0.0f, 1.0f, 0.001f }, 0.0f);
+    add (IDs::lfoShape,     "LFO Shape",     R { 0.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::manualBpm,    "BPM",           R { 20.0f, 300.0f, 0.01f }, 120.0f);
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::lfoTarget, 1 }, "LFO Target",
+                     juce::StringArray { "Volume", "Pan" }, 0));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::align, 1 }, "Hit on note (PDC)", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::sync, 1 }, "Sync to BPM", false));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::bpmSync, 1 }, "Sync BPM to Host", true));
@@ -208,7 +219,9 @@ ReverseVerbProcessor::ReverseVerbProcessor()
     for (auto* id : { &IDs::size, &IDs::decay, &IDs::damp, &IDs::diff, &IDs::er, &IDs::sep, &IDs::width, &IDs::gap,
                       &IDs::tail, &IDs::shape, &IDs::tone, &IDs::basscut, &IDs::align, &IDs::trimStart, &IDs::trimEnd,
                       &IDs::sync, &IDs::syncLen, &IDs::syncDivisionV2, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
-                      &IDs::transpose, &IDs::volStart, &IDs::volEnd, &IDs::volTension, &IDs::direction })
+                      &IDs::transpose, &IDs::stretch, &IDs::volStart, &IDs::volEnd, &IDs::volTension,
+                      &IDs::panStart, &IDs::panEnd, &IDs::panTension,
+                      &IDs::lfoRate, &IDs::lfoDepth, &IDs::lfoShape, &IDs::lfoTarget, &IDs::direction })
         apvts.addParameterListener (*id, this);
     for (auto& cc : ccToParamIndex)
         cc = -1;
@@ -228,6 +241,11 @@ ReverseVerbProcessor::ReverseVerbProcessor()
     const rv::GatePattern initialPattern;
     publishGatePattern (initialPattern);
     storeGatePatternInState (initialPattern, nullptr);
+    const rv::Envelope initialEnvelope;
+    publishVolumeEnvelope (initialEnvelope);
+    storeVolumeEnvelopeInState (initialEnvelope, nullptr);
+    publishPanEnvelope (initialEnvelope);
+    storePanEnvelopeInState (initialEnvelope, nullptr);
     undoManager.clearUndoHistory();
     startTimer (60);
 }
@@ -343,7 +361,12 @@ void ReverseVerbProcessor::resetEdits()
     setParam (IDs::trimStart, 0.0f);  setParam (IDs::trimEnd, 1.0f);
     setParam (IDs::pitch, 0.0f);      setParam (IDs::pitchTension, 0.0f);
     setParam (IDs::transpose, 0.0f);
+    setParam (IDs::stretch, 1.0f);
     setParam (IDs::volStart, 1.0f);   setParam (IDs::volEnd, 1.0f);  setParam (IDs::volTension, 0.0f);
+    setParam (IDs::panStart, 0.0f);   setParam (IDs::panEnd, 0.0f);  setParam (IDs::panTension, 0.0f);
+    setParam (IDs::lfoDepth, 0.0f);
+    replaceVolumeEnvelope (rv::Envelope {}, "Reset edits");
+    replacePanEnvelope (rv::Envelope {}, "Reset edits");
     stopAll(); // silence any currently-playing preview so the reset is heard cleanly on the next trigger
 }
 
@@ -397,6 +420,83 @@ void ReverseVerbProcessor::replaceGatePattern (const rv::GatePattern& pattern,
         }
     storeGatePatternInState (clean, &undoManager);
     publishGatePattern (clean);
+}
+
+std::shared_ptr<const rv::Envelope> ReverseVerbProcessor::getVolumeEnvelope() const
+{
+    return std::atomic_load_explicit (&volumeEnvelope, std::memory_order_acquire);
+}
+
+std::shared_ptr<const rv::Envelope> ReverseVerbProcessor::getPanEnvelope() const
+{
+    return std::atomic_load_explicit (&panEnvelope, std::memory_order_acquire);
+}
+
+void ReverseVerbProcessor::publishVolumeEnvelope (const rv::Envelope& env)
+{
+    auto immutable = std::make_shared<const rv::Envelope> (rv::sanitiseEnvelope (env, 0.0f, 1.0f));
+    std::atomic_store_explicit (&volumeEnvelope, std::move (immutable), std::memory_order_release);
+}
+
+void ReverseVerbProcessor::publishPanEnvelope (const rv::Envelope& env)
+{
+    auto immutable = std::make_shared<const rv::Envelope> (rv::sanitiseEnvelope (env, -1.0f, 1.0f));
+    std::atomic_store_explicit (&panEnvelope, std::move (immutable), std::memory_order_release);
+}
+
+void ReverseVerbProcessor::storeVolumeEnvelopeInState (const rv::Envelope& env, juce::UndoManager* undo)
+{
+    const auto existing = apvts.state.getChildWithName (rv::volumeEnvelopeStateType);
+    if (existing.isValid())
+        apvts.state.removeChild (existing, undo);
+    apvts.state.addChild (rv::envelopeToValueTree (rv::volumeEnvelopeStateType, env, 0.0f, 1.0f), -1, undo);
+}
+
+void ReverseVerbProcessor::storePanEnvelopeInState (const rv::Envelope& env, juce::UndoManager* undo)
+{
+    const auto existing = apvts.state.getChildWithName (rv::panEnvelopeStateType);
+    if (existing.isValid())
+        apvts.state.removeChild (existing, undo);
+    apvts.state.addChild (rv::envelopeToValueTree (rv::panEnvelopeStateType, env, -1.0f, 1.0f), -1, undo);
+}
+
+void ReverseVerbProcessor::replaceVolumeEnvelope (const rv::Envelope& env, const juce::String& transactionName)
+{
+    const auto clean = rv::sanitiseEnvelope (env, 0.0f, 1.0f);
+    undoManager.beginNewTransaction (transactionName);
+    storeVolumeEnvelopeInState (clean, &undoManager);
+    publishVolumeEnvelope (clean);
+}
+
+void ReverseVerbProcessor::replacePanEnvelope (const rv::Envelope& env, const juce::String& transactionName)
+{
+    const auto clean = rv::sanitiseEnvelope (env, -1.0f, 1.0f);
+    undoManager.beginNewTransaction (transactionName);
+    storePanEnvelopeInState (clean, &undoManager);
+    publishPanEnvelope (clean);
+}
+
+void ReverseVerbProcessor::normalize()
+{
+    const auto r = getRendered();
+    if (r == nullptr || r->getNumSamples() <= 0)
+        return;
+    const float dry = param (IDs::dry), wet = param (IDs::wet);
+    const int n = r->getNumSamples();
+    float peak = 0.0001f;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const bool hasWet = ch < r->wetAudio.getNumChannels() && r->wetAudio.getNumSamples() >= n;
+        const bool hasDry = ch < r->dryAudio.getNumChannels() && r->dryAudio.getNumSamples() >= n;
+        const auto* w = hasWet ? r->wetAudio.getReadPointer (ch) : nullptr;
+        const auto* d = hasDry ? r->dryAudio.getReadPointer (ch) : nullptr;
+        for (int i = 0; i < n; ++i)
+        {
+            const float sample = (w != nullptr ? w[i] * wet : 0.0f) + (d != nullptr ? d[i] * dry : 0.0f);
+            peak = juce::jmax (peak, std::abs (sample));
+        }
+    }
+    setParam (IDs::outputGain, juce::jlimit (-24.0f, 24.0f, juce::Decibels::gainToDecibels (0.9f / peak)));
 }
 
 void ReverseVerbProcessor::setGateStep (int step, float value,
@@ -582,7 +682,8 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (stopRequest.exchange (0) != 0) for (auto& v : voices) v.active = false;
     if (triggerRequest.exchange (0) != 0) startVoice (1.0f);
 
-    const float dry = dryParam->load(), wet = wetParam->load();
+    const float outGainLin = juce::Decibels::decibelsToGain (param (IDs::outputGain));
+    const float dry = dryParam->load() * outGainLin, wet = wetParam->load() * outGainLin;
     const auto patternSnapshot = getGatePattern();
     const rv::GatePattern fallbackPattern;
     const auto& pattern = patternSnapshot != nullptr ? *patternSnapshot : fallbackPattern;
@@ -654,7 +755,7 @@ void ReverseVerbProcessor::render()
         padded.clear();
         for (int ch = 0; ch < src.getNumChannels(); ++ch) padded.copyFrom (ch, 0, src, ch, 0, srcLen);
         const double ratio = srcSR / sr;
-        const int hitLen = juce::jmax (1, (int) std::floor (srcLen / ratio));
+        int hitLen = juce::jmax (1, (int) std::floor (srcLen / ratio));
         juce::AudioBuffer<float> hit (2, hitLen);
         for (int ch = 0; ch < 2; ++ch)
         {
@@ -663,6 +764,21 @@ void ReverseVerbProcessor::render()
         }
         const float hitMag = hit.getMagnitude (0, hitLen);
         if (hitMag > 0.0f) hit.applyGain (0.9f / hitMag);
+
+        // 1b. optional time-stretch: spreads the source material itself across a
+        // much longer span (independent of pitch), so full-length risers/fallers
+        // can be built from real sample content rather than just a long reverb
+        // tail appended to a short hit. Everything downstream (reverb, filters,
+        // timeline placement) just keeps working off whatever hitLen now is.
+        const float stretchAmt = param (IDs::stretch);
+        if (stretchAmt > 1.001f)
+        {
+            hit = rv::timeStretch (hit, sr, (double) stretchAmt);
+            hitLen = juce::jmin (hit.getNumSamples(), (int) (sr * 300.0));
+            hit.setSize (2, hitLen, true, true, true);
+            const float stretchedMag = hit.getMagnitude (0, hitLen);
+            if (stretchedMag > 0.0f) hit.applyGain (0.9f / stretchedMag);
+        }
 
         // 2. tail length (free or synced to BPM)
         const int gapLen = (int) (param (IDs::gap) * 0.001f * sr);
@@ -837,22 +953,61 @@ void ReverseVerbProcessor::render()
             wetOutEnd = wetInputEnd;
         }
 
-        // 10. volume envelope
+        // 10. volume + pan envelopes (each may carry extra hand-placed points
+        // beyond the Start/End knobs), plus an optional LFO nudging whichever
+        // of the two it's aimed at.
         const int n = wetBuffer.getNumSamples();
         const float v0 = param (IDs::volStart), v1 = param (IDs::volEnd), vt = param (IDs::volTension);
-        const bool flatVol = std::abs (v0 - 1.0f) < 0.001f && std::abs (v1 - 1.0f) < 0.001f;
+        const float p0 = param (IDs::panStart), p1 = param (IDs::panEnd), pt = param (IDs::panTension);
+        const rv::Envelope emptyEnvelope;
+        const auto volEnvPtr = getVolumeEnvelope();
+        const auto panEnvPtr = getPanEnvelope();
+        const auto& volE = volEnvPtr != nullptr ? *volEnvPtr : emptyEnvelope;
+        const auto& panE = panEnvPtr != nullptr ? *panEnvPtr : emptyEnvelope;
+        const float lfoRateHz = param (IDs::lfoRate), lfoDepthAmt = param (IDs::lfoDepth), lfoShapeAmt = param (IDs::lfoShape);
+        const int lfoTargetIdx = (int) param (IDs::lfoTarget); // 0 = Volume, 1 = Pan
+        const bool lfoActive = lfoDepthAmt > 0.0005f;
+        const float lfoExponent = juce::jmap (juce::jlimit (0.0f, 1.0f, lfoShapeAmt), 1.0f, 0.05f);
+        const bool flatVol = std::abs (v0 - 1.0f) < 0.001f && std::abs (v1 - 1.0f) < 0.001f && volE.numInterior == 0
+                          && ! (lfoActive && lfoTargetIdx == 0);
+        const bool flatPan = std::abs (p0) < 0.001f && std::abs (p1) < 0.001f && panE.numInterior == 0
+                          && ! (lfoActive && lfoTargetIdx == 1);
         for (int i = 0; i < n; ++i)
         {
+            float lfoVal = 0.0f;
+            if (lfoActive)
+            {
+                const float phase = std::fmod ((float) i / (float) sr * lfoRateHz, 1.0f);
+                const float osc = std::sin (juce::MathConstants<float>::twoPi * phase);
+                lfoVal = (osc < 0.0f ? -1.0f : 1.0f) * std::pow (std::abs (osc), lfoExponent) * lfoDepthAmt;
+            }
+
             float g = 1.0f;
             if (! flatVol)
             {
-                const float lvl = v0 + (v1 - v0) * tensionCurve ((float) i / (float) juce::jmax (1, n - 1), vt);
-                g = lvl * lvl;
+                const float t = (float) i / (float) juce::jmax (1, n - 1);
+                float lvl = rv::envelopeValueAt (volE, t, v0, v1, vt);
+                if (lfoActive && lfoTargetIdx == 0) lvl *= (1.0f + lfoVal);
+                g = juce::jmax (0.0f, lvl * lvl);
                 for (int ch = 0; ch < 2; ++ch)
                 {
                     wetBuffer.getWritePointer (ch)[i] *= g;
                     dryBuffer.getWritePointer (ch)[i] *= g;
                 }
+            }
+            if (! flatPan)
+            {
+                const float t = (float) i / (float) juce::jmax (1, n - 1);
+                float pan = rv::envelopeValueAt (panE, t, p0, p1, pt);
+                if (lfoActive && lfoTargetIdx == 1) pan += lfoVal;
+                pan = juce::jlimit (-1.0f, 1.0f, pan);
+                // Balance law (not equal-power): unity on the side panned toward,
+                // the other side attenuates. Matches pan = 0 exactly so there's no
+                // level jump the moment this control is first touched.
+                const float panGainL = juce::jmin (1.0f, 1.0f - pan);
+                const float panGainR = juce::jmin (1.0f, 1.0f + pan);
+                wetBuffer.getWritePointer (0)[i] *= panGainL; wetBuffer.getWritePointer (1)[i] *= panGainR;
+                dryBuffer.getWritePointer (0)[i] *= panGainL; dryBuffer.getWritePointer (1)[i] *= panGainR;
             }
             if (i % RenderedSample::envStep == 0) { out->gainLin.push_back (g); out->pitchSemi.push_back (semiPerSample[(size_t) i]); }
         }
@@ -944,11 +1099,21 @@ void ReverseVerbProcessor::applyPresetState (const juce::ValueTree& state, const
     const auto fallback = current != nullptr ? *current : rv::GatePattern {};
     const auto restoredPattern = rv::gatePatternFromValueTree (
         state.getChildWithName (rv::gatePatternStateType), fallback);
+    const auto restoredVolEnvelope = rv::envelopeFromValueTree (rv::volumeEnvelopeStateType,
+        state.getChildWithName (rv::volumeEnvelopeStateType), 0.0f, 1.0f);
+    const auto restoredPanEnvelope = rv::envelopeFromValueTree (rv::panEnvelopeStateType,
+        state.getChildWithName (rv::panEnvelopeStateType), -1.0f, 1.0f);
 
     apvts.replaceState (state);
     publishGatePattern (restoredPattern);
     if (! apvts.state.getChildWithName (rv::gatePatternStateType).isValid())
         storeGatePatternInState (restoredPattern, nullptr);
+    publishVolumeEnvelope (restoredVolEnvelope);
+    if (! apvts.state.getChildWithName (rv::volumeEnvelopeStateType).isValid())
+        storeVolumeEnvelopeInState (restoredVolEnvelope, nullptr);
+    publishPanEnvelope (restoredPanEnvelope);
+    if (! apvts.state.getChildWithName (rv::panEnvelopeStateType).isValid())
+        storePanEnvelopeInState (restoredPanEnvelope, nullptr);
 
     currentPresetName = presetName;
     dirty = true;
@@ -960,6 +1125,8 @@ void ReverseVerbProcessor::applyFactoryPreset (const rv::FactoryPreset& preset)
         setParam (id, value);
     if (preset.gatePattern.has_value())
         replaceGatePattern (*preset.gatePattern, "Load preset: " + preset.name);
+    replaceVolumeEnvelope (rv::Envelope {}, "Load preset: " + preset.name);
+    replacePanEnvelope (rv::Envelope {}, "Load preset: " + preset.name);
     currentPresetName = preset.name;
     dirty = true;
 }
@@ -1039,6 +1206,16 @@ void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
         savedPattern.activeSteps = getGateSettings().activeSteps;
         state.addChild (rv::gatePatternToValueTree (savedPattern), -1, nullptr);
     }
+    for (auto* type : { &rv::volumeEnvelopeStateType, &rv::panEnvelopeStateType })
+    {
+        const auto existing = state.getChildWithName (*type);
+        if (existing.isValid())
+            state.removeChild (existing, nullptr);
+    }
+    if (const auto volEnv = getVolumeEnvelope())
+        state.addChild (rv::envelopeToValueTree (rv::volumeEnvelopeStateType, *volEnv, 0.0f, 1.0f), -1, nullptr);
+    if (const auto panEnv = getPanEnvelope())
+        state.addChild (rv::envelopeToValueTree (rv::panEnvelopeStateType, *panEnv, -1.0f, 1.0f), -1, nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -1053,10 +1230,20 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
                                 && stateContainsParameter (state, IDs::syncDivisionV2);
         const auto restoredPattern = rv::gatePatternFromValueTree (
             state.getChildWithName (rv::gatePatternStateType));
+        const auto restoredVolEnvelope = rv::envelopeFromValueTree (rv::volumeEnvelopeStateType,
+            state.getChildWithName (rv::volumeEnvelopeStateType), 0.0f, 1.0f);
+        const auto restoredPanEnvelope = rv::envelopeFromValueTree (rv::panEnvelopeStateType,
+            state.getChildWithName (rv::panEnvelopeStateType), -1.0f, 1.0f);
         apvts.replaceState (state);
         publishGatePattern (restoredPattern);
         if (! apvts.state.getChildWithName (rv::gatePatternStateType).isValid())
             storeGatePatternInState (restoredPattern, nullptr);
+        publishVolumeEnvelope (restoredVolEnvelope);
+        if (! apvts.state.getChildWithName (rv::volumeEnvelopeStateType).isValid())
+            storeVolumeEnvelopeInState (restoredVolEnvelope, nullptr);
+        publishPanEnvelope (restoredPanEnvelope);
+        if (! apvts.state.getChildWithName (rv::panEnvelopeStateType).isValid())
+            storePanEnvelopeInState (restoredPanEnvelope, nullptr);
         if (! hasDirection)
             if (auto* direction = apvts.getParameter (IDs::direction))
                 direction->setValueNotifyingHost (direction->convertTo0to1 (0.0f));
