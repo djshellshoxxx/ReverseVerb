@@ -27,6 +27,7 @@ namespace IDs
     static const juce::String stretch = "stretch";
     static const juce::String outputGain = "outputGain";
     static const juce::String lfoRate = "lfoRate", lfoDepth = "lfoDepth", lfoShape = "lfoShape", lfoTarget = "lfoTarget";
+    static const juce::String lfoSync = "lfoSync", lfoSyncDivision = "lfoSyncDivision";
     static const juce::String hitEnabled = "hitEnabled";
     static const juce::String fxEnabled = "fxEnabled", fxTime = "fxTime", fxFeedback = "fxFeedback";
     static const juce::String fxModRate = "fxModRate", fxModDepth = "fxModDepth", fxMix = "fxMix", fxOrder = "fxOrder";

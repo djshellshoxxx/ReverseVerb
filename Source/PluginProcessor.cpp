@@ -176,7 +176,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ReverseVerbProcessor::create
     add (IDs::fxMix,        "FX Mix",        R { 0.0f, 1.0f, 0.001f }, 0.0f);
     add (IDs::manualBpm,    "BPM",           R { 20.0f, 300.0f, 0.01f }, 120.0f);
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::lfoTarget, 1 }, "LFO Target",
-                     juce::StringArray { "Volume", "Pan" }, 0));
+                     juce::StringArray { "Volume", "Pan", "Pitch", "Width" }, 0));
+    p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::lfoSync, 1 }, "LFO Sync", false));
+    juce::StringArray lfoSyncRates;
+    for (const auto division : rv::allDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        lfoSyncRates.add (juce::String::fromUTF8 (label.data(), (int) label.size()));
+    }
+    p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::lfoSyncDivision, 1 }, "LFO Sync Division",
+                     lfoSyncRates, (int) rv::Division::oneBar));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::hitEnabled, 1 }, "Hit Enabled", true));
     p.push_back (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { IDs::fxEnabled, 1 }, "FX Enabled", false));
     p.push_back (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { IDs::fxOrder, 1 }, "FX Order",
@@ -241,7 +250,7 @@ ReverseVerbProcessor::ReverseVerbProcessor()
                       &IDs::sync, &IDs::syncLen, &IDs::syncDivisionV2, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
                       &IDs::transpose, &IDs::stretch, &IDs::volStart, &IDs::volEnd, &IDs::volTension,
                       &IDs::panStart, &IDs::panEnd, &IDs::panTension,
-                      &IDs::lfoRate, &IDs::lfoDepth, &IDs::lfoShape, &IDs::lfoTarget,
+                      &IDs::lfoRate, &IDs::lfoDepth, &IDs::lfoShape, &IDs::lfoTarget, &IDs::lfoSync, &IDs::lfoSyncDivision,
                       &IDs::fxEnabled, &IDs::fxTime, &IDs::fxFeedback, &IDs::fxModRate, &IDs::fxModDepth, &IDs::fxMix, &IDs::fxOrder,
                       &IDs::fxSync, &IDs::fxSyncDivision,
                       &IDs::direction })
@@ -937,6 +946,32 @@ void ReverseVerbProcessor::render()
         int wetInputEnd = juce::jmin (trimLen, timeline.wetStart + revLen - tStart);
         if (wetInputEnd <= wetInputStart) wetInputStart = wetInputEnd = -1;
 
+        // LFO: one oscillator, several possible destinations (Volume, Pan,
+        // Pitch, Width). Computed here, before the pitch sweep, so Pitch
+        // modulation can ride the same resample pass as the sweep below;
+        // Volume/Pan/Width reuse the identical function further down.
+        float lfoRateHz = param (IDs::lfoRate);
+        if (param (IDs::lfoSync) > 0.5f)
+        {
+            const auto lfoDivisionIndex = juce::jlimit (0, (int) rv::allDivisions.size() - 1, (int) param (IDs::lfoSyncDivision));
+            const auto lfoDivision = rv::allDivisions[(size_t) lfoDivisionIndex];
+            const auto periodSeconds = rv::quarterNotes (lfoDivision, hostTiming.timeSignature) * 60.0 / bpm;
+            if (periodSeconds > 0.0001) lfoRateHz = (float) (1.0 / periodSeconds);
+        }
+        const float lfoDepthAmt = param (IDs::lfoDepth);
+        const float lfoShapeAmt = param (IDs::lfoShape);
+        const int lfoTargetIdx = (int) param (IDs::lfoTarget); // 0 Volume, 1 Pan, 2 Pitch, 3 Width
+        const bool lfoActive = lfoDepthAmt > 0.0005f;
+        const float lfoExponent = juce::jmap (juce::jlimit (0.0f, 1.0f, lfoShapeAmt), 1.0f, 0.05f);
+        auto lfoValueAt = [&] (int sampleIndex) noexcept -> float
+        {
+            if (! lfoActive) return 0.0f;
+            const float phase = std::fmod ((float) sampleIndex / (float) sr * lfoRateHz, 1.0f);
+            const float osc = std::sin (juce::MathConstants<float>::twoPi * phase);
+            return (osc < 0.0f ? -1.0f : 1.0f) * std::pow (std::abs (osc), lfoExponent) * lfoDepthAmt;
+        };
+        const bool pitchLfoActive = lfoActive && lfoTargetIdx == 2;
+
         // 9. pitch sweep (varispeed)
         const float pitchAmt = param (IDs::pitch);
         const float octaves = kPitchOct[juce::jlimit (0, 2, (int) param (IDs::pitchRange))];
@@ -950,7 +985,7 @@ void ReverseVerbProcessor::render()
         int hitOut = -1;
         int dryOutStart = -1, dryOutEnd = -1;
         int wetOutStart = -1, wetOutEnd = -1;
-        if (std::abs (pitchAmt) > 0.001f || std::abs (transposeSemis) > 0.001f)
+        if (std::abs (pitchAmt) > 0.001f || std::abs (transposeSemis) > 0.001f || pitchLfoActive)
         {
             std::array<std::vector<float>, 2> wetSamples, drySamples;
             for (auto& samples : wetSamples) samples.reserve ((size_t) trimLen * 2);
@@ -973,10 +1008,11 @@ void ReverseVerbProcessor::render()
                     wetSamples[(size_t) ch].push_back (wet[i0] + (wet[i0 + 1] - wet[i0]) * frac);
                     drySamples[(size_t) ch].push_back (dry[i0] + (dry[i0 + 1] - dry[i0]) * frac);
                 }
+                const int outputIndex = (int) semiPerSample.size();
                 const float semis = pitchAmt * octaves * 12.0f * tensionCurve ((float) p / (float) trimLen, pitchT)
-                                  + transposeSemis;
+                                  + transposeSemis
+                                  + (pitchLfoActive ? lfoValueAt (outputIndex) * 12.0f : 0.0f);
                 semiPerSample.push_back (semis);
-                const int outputIndex = (int) semiPerSample.size() - 1;
                 if (hitIdx >= 0 && hitOut < 0 && p >= hitIdx) hitOut = outputIndex;
                 if (dryInputStart >= 0 && p >= dryInputStart && p < dryInputEnd)
                 {
@@ -1017,8 +1053,9 @@ void ReverseVerbProcessor::render()
         }
 
         // 10. volume + pan envelopes (each may carry extra hand-placed points
-        // beyond the Start/End knobs), plus an optional LFO nudging whichever
-        // of the two it's aimed at.
+        // beyond the Start/End knobs), plus width, and an optional LFO nudging
+        // whichever of Volume/Pan/Width it's aimed at (Pitch was handled above,
+        // inside the resample pass).
         const int n = wetBuffer.getNumSamples();
         const float v0 = param (IDs::volStart), v1 = param (IDs::volEnd), vt = param (IDs::volTension);
         const float p0 = param (IDs::panStart), p1 = param (IDs::panEnd), pt = param (IDs::panTension);
@@ -1027,23 +1064,14 @@ void ReverseVerbProcessor::render()
         const auto panEnvPtr = getPanEnvelope();
         const auto& volE = volEnvPtr != nullptr ? *volEnvPtr : emptyEnvelope;
         const auto& panE = panEnvPtr != nullptr ? *panEnvPtr : emptyEnvelope;
-        const float lfoRateHz = param (IDs::lfoRate), lfoDepthAmt = param (IDs::lfoDepth), lfoShapeAmt = param (IDs::lfoShape);
-        const int lfoTargetIdx = (int) param (IDs::lfoTarget); // 0 = Volume, 1 = Pan
-        const bool lfoActive = lfoDepthAmt > 0.0005f;
-        const float lfoExponent = juce::jmap (juce::jlimit (0.0f, 1.0f, lfoShapeAmt), 1.0f, 0.05f);
         const bool flatVol = std::abs (v0 - 1.0f) < 0.001f && std::abs (v1 - 1.0f) < 0.001f && volE.numInterior == 0
                           && ! (lfoActive && lfoTargetIdx == 0);
         const bool flatPan = std::abs (p0) < 0.001f && std::abs (p1) < 0.001f && panE.numInterior == 0
                           && ! (lfoActive && lfoTargetIdx == 1);
+        const bool widthLfoActive = lfoActive && lfoTargetIdx == 3;
         for (int i = 0; i < n; ++i)
         {
-            float lfoVal = 0.0f;
-            if (lfoActive)
-            {
-                const float phase = std::fmod ((float) i / (float) sr * lfoRateHz, 1.0f);
-                const float osc = std::sin (juce::MathConstants<float>::twoPi * phase);
-                lfoVal = (osc < 0.0f ? -1.0f : 1.0f) * std::pow (std::abs (osc), lfoExponent) * lfoDepthAmt;
-            }
+            const float lfoVal = lfoValueAt (i);
 
             float g = 1.0f;
             if (! flatVol)
@@ -1071,6 +1099,21 @@ void ReverseVerbProcessor::render()
                 const float panGainR = juce::jmin (1.0f, 1.0f + pan);
                 wetBuffer.getWritePointer (0)[i] *= panGainL; wetBuffer.getWritePointer (1)[i] *= panGainR;
                 dryBuffer.getWritePointer (0)[i] *= panGainL; dryBuffer.getWritePointer (1)[i] *= panGainR;
+            }
+            if (widthLfoActive)
+            {
+                // Mid/side width pulse: 0 collapses to mono, 1 is unchanged,
+                // 2 exaggerates the stereo spread. Applied to both layers.
+                const float widthFactor = juce::jlimit (0.0f, 2.0f, 1.0f + lfoVal);
+                for (auto* buf : { &wetBuffer, &dryBuffer })
+                {
+                    auto* l = buf->getWritePointer (0);
+                    auto* r = buf->getWritePointer (1);
+                    const float mid = (l[i] + r[i]) * 0.5f;
+                    const float side = (l[i] - r[i]) * 0.5f * widthFactor;
+                    l[i] = mid + side;
+                    r[i] = mid - side;
+                }
             }
             if (i % RenderedSample::envStep == 0) { out->gainLin.push_back (g); out->pitchSemi.push_back (semiPerSample[(size_t) i]); }
         }

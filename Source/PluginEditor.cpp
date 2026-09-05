@@ -954,7 +954,9 @@ PAN
   START/END/TENSION work just like Volume's, but move the mix left/right over time instead of up/down. Add extra points on the waveform's pink pan line the same way.
 
 LFO
-  RATE (Hz) and DEPTH set the modulation speed and amount; SHAPE morphs the wave from round (sine) to square. TARGET picks whether it's Volume or Pan being modulated. DEPTH at 0 = off.
+  RATE (Hz) and DEPTH set the modulation speed and amount; SHAPE morphs the wave from round (sine) to square. DEPTH at 0 = off.
+  SYNC locks RATE to a tempo division (1/64T up to 64 bars) instead of the free Hz knob - the reliable way to make the modulation exactly as slow or fast as you want in musical terms, and to keep it landing in time as tempo changes.
+  TARGET picks what's modulated: VOLUME (tremolo), PAN (auto-pan), PITCH (vibrato, +/-12 semitones at full depth), or WIDTH (pulses the stereo image between mono and extra-wide).
 
 GATOR
   Applied last, live, at playback time - after Stretch, Reverb, FX, Pitch, and the Volume/Pan/LFO envelopes are baked in, so it always gates the final mix.
@@ -1489,7 +1491,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kLfoShape->slider.setTooltip ("Morphs the LFO's wave from round (sine) to square.");
 
     addAndMakeVisible (lfoTargetCombo);
-    lfoTargetCombo.addItemList ({ "Volume", "Pan" }, 1);
+    lfoTargetCombo.addItemList ({ "Volume", "Pan", "Pitch", "Width" }, 1);
     lfoTargetCombo.setTooltip ("What the LFO modulates.");
     lfoTargetAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::lfoTarget, lfoTargetCombo);
     if (auto* parameter = proc.apvts.getParameter (IDs::lfoTarget))
@@ -1499,6 +1501,23 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     lfoTargetLabel.setJustificationType (juce::Justification::centred);
     lfoTargetLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (lfoTargetLabel);
+
+    addAndMakeVisible (lfoSyncToggle);
+    lfoSyncToggle.setTooltip ("Lock the LFO RATE to a tempo division instead of the free Hz knob - the easiest way to make the modulation reliably slower or faster in musical terms.");
+    lfoSyncAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::lfoSync, lfoSyncToggle);
+    if (auto* parameter = proc.apvts.getParameter (IDs::lfoSync))
+        lfoSyncToggle.setHostParameter (*this, *parameter, proc);
+    addAndMakeVisible (lfoSyncDivisionCombo);
+    for (const auto division : rv::allDivisions)
+    {
+        const auto label = rv::divisionLabel (division);
+        lfoSyncDivisionCombo.addItem (juce::String::fromUTF8 (label.data(), (int) label.size()),
+                                      lfoSyncDivisionCombo.getNumItems() + 1);
+    }
+    lfoSyncDivisionCombo.setTooltip ("Tempo division for one full LFO cycle when SYNC is on - anything from 1/64T up to 64 bars.");
+    lfoSyncDivisionAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::lfoSyncDivision, lfoSyncDivisionCombo);
+    if (auto* parameter = proc.apvts.getParameter (IDs::lfoSyncDivision))
+        lfoSyncDivisionCombo.setHostParameter (*this, *parameter, proc);
 
     kFxTime = &makeKnob (IDs::fxTime, "TIME");
     kFxFeedback = &makeKnob (IDs::fxFeedback, "FEEDBACK");
@@ -1566,7 +1585,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
                 &kVolStart->slider, &kVolStart->label, &kVolEnd->slider, &kVolEnd->label, &kVolTension->slider, &kVolTension->label,
                 &kPanStart->slider, &kPanStart->label, &kPanEnd->slider, &kPanEnd->label, &kPanTension->slider, &kPanTension->label,
                 &kLfoRate->slider, &kLfoRate->label, &kLfoDepth->slider, &kLfoDepth->label, &kLfoShape->slider, &kLfoShape->label,
-                &lfoTargetLabel, &lfoTargetCombo };
+                &lfoTargetLabel, &lfoTargetCombo, &lfoSyncToggle, &lfoSyncDivisionCombo };
     fxPage = { &fxEnabledToggle, &kFxTime->slider, &kFxTime->label, &kFxFeedback->slider, &kFxFeedback->label,
                &kFxModRate->slider, &kFxModRate->label, &kFxModDepth->slider, &kFxModDepth->label,
                &kFxMix->slider, &kFxMix->label, &fxOrderLabel, &fxOrderCombo,
@@ -1746,6 +1765,9 @@ void ReverseVerbEditor::timerCallback()
     const bool fxTimeSynced = proc.param (IDs::fxSync) > 0.5f;
     kFxTime->slider.setEnabled (! fxTimeSynced);
     kFxTime->slider.setAlpha (fxTimeSynced ? 0.4f : 1.0f);
+    const bool lfoRateSynced = proc.param (IDs::lfoSync) > 0.5f;
+    kLfoRate->slider.setEnabled (! lfoRateSynced);
+    kLfoRate->slider.setAlpha (lfoRateSynced ? 0.4f : 1.0f);
 }
 
 void ReverseVerbEditor::paint (juce::Graphics& g)
@@ -1910,11 +1932,16 @@ void ReverseVerbEditor::resized()
             const int unitB = totalB / 10;
             layoutKnobs (group (rowB, unitB * 3, "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
             layoutKnobs (group (rowB, unitB * 3, "PAN  (drag the pink diamonds)"), { kPanStart, kPanEnd, kPanTension });
-            auto lfoArea = group (rowB, rowB.getWidth(), "LFO  (modulates Volume or Pan)");
+            auto lfoArea = group (rowB, rowB.getWidth(), "LFO  (modulates Volume, Pan, Pitch, or Width)");
             {
-                auto right = lfoArea.removeFromRight (74);
+                auto right = lfoArea.removeFromRight (140);
                 lfoTargetLabel.setBounds (right.removeFromTop (14));
                 lfoTargetCombo.setBounds (right.removeFromTop (26).reduced (2, 0));
+                right.removeFromTop (6);
+                auto syncRow = right.removeFromTop (26);
+                lfoSyncToggle.setBounds (syncRow.removeFromLeft (52));
+                syncRow.removeFromLeft (4);
+                lfoSyncDivisionCombo.setBounds (syncRow);
                 layoutKnobs (lfoArea, { kLfoRate, kLfoDepth, kLfoShape });
             }
             break;

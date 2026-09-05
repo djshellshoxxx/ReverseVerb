@@ -239,15 +239,18 @@ private:
     HostContextComboBox directionCombo, gateStepsCombo, gateRateCombo, gateRetriggerCombo, gateTargetCombo, gateShapeCombo;
     HostContextComboBox lfoTargetCombo;
     juce::Label lfoTargetLabel;
+    HostContextToggleButton lfoSyncToggle { "SYNC" };
+    HostContextComboBox lfoSyncDivisionCombo;
     HostContextToggleButton fxEnabledToggle { "FX" };
     HostContextComboBox fxOrderCombo;
     juce::Label fxOrderLabel;
     HostContextToggleButton fxSyncToggle { "SYNC" };
     HostContextComboBox fxSyncDivisionCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt, fxEnabledAtt, fxSyncAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, gateEnabledAtt, fxEnabledAtt, fxSyncAtt, lfoSyncAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, directionAtt,
                                                                             gateStepsAtt, gateRateAtt, gateRetriggerAtt,
-                                                                            gateTargetAtt, gateShapeAtt, lfoTargetAtt, fxOrderAtt, fxSyncDivisionAtt;
+                                                                            gateTargetAtt, gateShapeAtt, lfoTargetAtt, fxOrderAtt, fxSyncDivisionAtt,
+                                                                            lfoSyncDivisionAtt;
     juce::TextButton gateClear { "CLEAR" }, gateFill { "FILL" }, gateInvert { "INVERT" }, gateRandom { "RANDOM" },
                      gateLeft { "<" }, gateRight { ">" }, gateCopy { "COPY" }, gatePaste { "PASTE" },
                      gateUndo { "UNDO" }, gateRedo { "REDO" };
