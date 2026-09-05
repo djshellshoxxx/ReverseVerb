@@ -208,6 +208,15 @@ private:
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
     juce::Label generateLabel;
     juce::TextButton generateSnareButton { "SNARE" }, generateHatButton { "HAT" }, generateClapButton { "CLAP" };
+
+    juce::Label presetLabel;
+    juce::ComboBox presetCombo;
+    juce::TextButton presetPrevButton { "<" }, presetNextButton { ">" }, presetSaveButton { "SAVE" }, presetDeleteButton { "DEL" };
+    juce::StringArray userPresetNames;
+    void rebuildPresetCombo (int itemIdToSelect = -1);
+    void loadSelectedPreset();
+    void promptSavePreset();
+    void promptDeletePreset();
     HostContextToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
     HostContextToggleButton gateToggle { "GATOR" };
     HostContextComboBox syncCombo, rangeCombo;

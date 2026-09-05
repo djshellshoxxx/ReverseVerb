@@ -876,6 +876,42 @@ juce::String ReverseVerbProcessor::getDisplayLabel() const
     return currentFile.existsAsFile() ? currentFile.getFileName() : juce::String();
 }
 
+// ---------------- presets ----------------
+
+juce::ValueTree ReverseVerbProcessor::buildPresetState()
+{
+    return apvts.copyState();
+}
+
+void ReverseVerbProcessor::applyPresetState (const juce::ValueTree& state, const juce::String& presetName)
+{
+    if (! state.isValid())
+        return;
+
+    const auto current = getGatePattern();
+    const auto fallback = current != nullptr ? *current : rv::GatePattern {};
+    const auto restoredPattern = rv::gatePatternFromValueTree (
+        state.getChildWithName (rv::gatePatternStateType), fallback);
+
+    apvts.replaceState (state);
+    publishGatePattern (restoredPattern);
+    if (! apvts.state.getChildWithName (rv::gatePatternStateType).isValid())
+        storeGatePatternInState (restoredPattern, nullptr);
+
+    currentPresetName = presetName;
+    dirty = true;
+}
+
+void ReverseVerbProcessor::applyFactoryPreset (const rv::FactoryPreset& preset)
+{
+    for (const auto& [id, value] : preset.params)
+        setParam (id, value);
+    if (preset.gatePattern.has_value())
+        replaceGatePattern (*preset.gatePattern, "Load preset: " + preset.name);
+    currentPresetName = preset.name;
+    dirty = true;
+}
+
 void ReverseVerbProcessor::nextSample()
 {
     if (folderFiles.isEmpty()) return;
@@ -935,6 +971,7 @@ void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.setProperty ("schemaVersion", 2, nullptr);
     state.setProperty ("useV2SyncDivision", useV2SyncDivision.load(), nullptr);
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
+    state.setProperty ("presetName", currentPresetName, nullptr);
     const auto existingPattern = state.getChildWithName (rv::gatePatternStateType);
     if (existingPattern.isValid())
         state.removeChild (existingPattern, nullptr);
@@ -972,6 +1009,7 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
                 division->setValueNotifyingHost (division->convertTo0to1 (mapped));
             }
         useV2SyncDivision = restoreV2Sync;
+        currentPresetName = state.getProperty ("presetName", "").toString();
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
         undoManager.clearUndoHistory();

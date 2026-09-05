@@ -659,6 +659,8 @@ static const char* kHelpText = R"(REVERSE VERB - what everything does
 WORKFLOW
   LOAD (or drop a file on the window) picks a hit. < > steps through every sample in that folder and auto-plays it with your current settings.
   GENERATE: SNARE / HAT / CLAP synthesizes a fresh one-shot instead of browsing for one; click again for a new variation.
+  PRESET recalls a full settings snapshot (every knob plus the gator pattern) without touching whichever sample is loaded.
+  Factory presets ship built in; SAVE names the current settings as a new preset, DEL removes a selected user preset (factory presets can't be deleted).
   Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.
   Right-click any knob, toggle, dropdown, waveform trim handle, or the pitch CURVE box for host automation commands
   (when the DAW provides them) and Reset to default.
@@ -951,6 +953,58 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     generateLabel.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     generateLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (generateLabel);
+
+    presetLabel.setText ("PRESET", juce::dontSendNotification);
+    presetLabel.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+    presetLabel.setColour (juce::Label::textColourId, textDim);
+    addAndMakeVisible (presetLabel);
+    addAndMakeVisible (presetCombo);
+    for (auto* b : { &presetPrevButton, &presetNextButton, &presetSaveButton, &presetDeleteButton })
+        addAndMakeVisible (b);
+    presetCombo.setTextWhenNothingSelected ("(no preset)");
+    presetCombo.setTooltip ("Recall a factory or saved preset. Presets change every knob and the gator pattern, not the loaded sample.");
+    presetPrevButton.setTooltip ("Previous preset.");
+    presetNextButton.setTooltip ("Next preset.");
+    presetSaveButton.setTooltip ("Save the current settings as a new preset.");
+    presetDeleteButton.setTooltip ("Delete the selected user preset.");
+    presetCombo.onChange = [this] { loadSelectedPreset(); };
+    presetPrevButton.onClick = [this]
+    {
+        const auto count = presetCombo.getNumItems();
+        if (count <= 0) return;
+        auto index = presetCombo.getSelectedItemIndex();
+        for (int tries = 0; tries < count; ++tries)
+        {
+            index = (index - 1 + count) % count;
+            if (presetCombo.getItemText (index).isNotEmpty()) break;
+        }
+        presetCombo.setSelectedItemIndex (index, juce::sendNotificationSync);
+    };
+    presetNextButton.onClick = [this]
+    {
+        const auto count = presetCombo.getNumItems();
+        if (count <= 0) return;
+        auto index = presetCombo.getSelectedItemIndex();
+        for (int tries = 0; tries < count; ++tries)
+        {
+            index = (index + 1) % count;
+            if (presetCombo.getItemText (index).isNotEmpty()) break;
+        }
+        presetCombo.setSelectedItemIndex (index, juce::sendNotificationSync);
+    };
+    presetSaveButton.onClick = [this] { promptSavePreset(); };
+    presetDeleteButton.onClick = [this] { promptDeletePreset(); };
+    rebuildPresetCombo();
+    if (const auto restoredName = proc.getCurrentPresetName(); restoredName.isNotEmpty())
+    {
+        const auto& factory = rv::factoryPresets();
+        for (int i = 0; i < (int) factory.size(); ++i)
+            if (factory[(size_t) i].name == restoredName)
+                presetCombo.setSelectedId (i + 1, juce::dontSendNotification);
+        const auto userIndex = userPresetNames.indexOf (restoredName);
+        if (userIndex >= 0)
+            presetCombo.setSelectedId ((int) factory.size() + userIndex + 1, juce::dontSendNotification);
+    }
     for (auto* t : { &alignToggle, &syncToggle }) addAndMakeVisible (t);
     addAndMakeVisible (waveform);
     addAndMakeVisible (shape);
@@ -1130,8 +1184,8 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
 
     addChildComponent (help);
     setResizable (true, true);
-    setResizeLimits (1060, 894, 1600, 1234);
-    setSize (1180, 954);
+    setResizeLimits (1060, 928, 1600, 1268);
+    setSize (1180, 988);
     startTimerHz (10);
     timerCallback();
 }
@@ -1161,6 +1215,96 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
     return *knobs.back();
 }
 
+// ---------------- Presets ----------------
+
+void ReverseVerbEditor::rebuildPresetCombo (int itemIdToSelect)
+{
+    const auto previousId = itemIdToSelect >= 0 ? itemIdToSelect : presetCombo.getSelectedId();
+    presetCombo.clear (juce::dontSendNotification);
+
+    const auto& factory = rv::factoryPresets();
+    presetCombo.addSectionHeading ("FACTORY");
+    for (int i = 0; i < (int) factory.size(); ++i)
+        presetCombo.addItem (factory[(size_t) i].name, i + 1);
+
+    userPresetNames = rv::listUserPresetNames (rv::getUserPresetDirectory());
+    if (! userPresetNames.isEmpty())
+    {
+        presetCombo.addSeparator();
+        presetCombo.addSectionHeading ("USER");
+        for (int i = 0; i < userPresetNames.size(); ++i)
+            presetCombo.addItem (userPresetNames[i], (int) factory.size() + i + 1);
+    }
+
+    if (previousId > 0)
+        presetCombo.setSelectedId (previousId, juce::dontSendNotification);
+}
+
+void ReverseVerbEditor::loadSelectedPreset()
+{
+    const auto id = presetCombo.getSelectedId();
+    if (id <= 0) return;
+
+    const auto& factory = rv::factoryPresets();
+    if (id <= (int) factory.size())
+    {
+        proc.applyFactoryPreset (factory[(size_t) (id - 1)]);
+        return;
+    }
+
+    const auto userIndex = id - (int) factory.size() - 1;
+    if (userIndex < 0 || userIndex >= userPresetNames.size())
+        return;
+    const auto name = userPresetNames[userIndex];
+    const auto state = rv::loadUserPreset (rv::getUserPresetDirectory(), name);
+    if (state.isValid())
+        proc.applyPresetState (state, name);
+}
+
+void ReverseVerbEditor::promptSavePreset()
+{
+    auto* dialog = new juce::AlertWindow ("Save preset", "Name this preset:", juce::MessageBoxIconType::NoIcon);
+    dialog->addTextEditor ("name", proc.getCurrentPresetName(), "Name:");
+    dialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    dialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    dialog->enterModalState (true, juce::ModalCallbackFunction::create (
+        [this, dialog] (int result)
+        {
+            if (result == 1)
+            {
+                const auto name = dialog->getTextEditorContents ("name").trim();
+                if (name.isNotEmpty()
+                    && rv::saveUserPreset (rv::getUserPresetDirectory(), name, proc.buildPresetState()))
+                {
+                    rebuildPresetCombo();
+                    const auto itemIndex = userPresetNames.indexOf (name);
+                    if (itemIndex >= 0)
+                        presetCombo.setSelectedId ((int) rv::factoryPresets().size() + itemIndex + 1, juce::dontSendNotification);
+                }
+            }
+        }), true);
+}
+
+void ReverseVerbEditor::promptDeletePreset()
+{
+    const auto id = presetCombo.getSelectedId();
+    const auto& factory = rv::factoryPresets();
+    if (id <= (int) factory.size()) return; // factory presets can't be deleted
+
+    const auto userIndex = id - (int) factory.size() - 1;
+    if (userIndex < 0 || userIndex >= userPresetNames.size()) return;
+    const auto name = userPresetNames[userIndex];
+
+    const auto options = juce::MessageBoxOptions::makeOptionsOkCancel (
+        juce::MessageBoxIconType::WarningIcon, "Delete preset",
+        "Delete the preset \"" + name + "\"? This can't be undone.", "Delete", "Cancel");
+    juce::AlertWindow::showAsync (options, [this, name] (int result)
+    {
+        if (result == 1 && rv::deleteUserPreset (rv::getUserPresetDirectory(), name))
+            rebuildPresetCombo (0);
+    });
+}
+
 void ReverseVerbEditor::timerCallback()
 {
     const auto displayLabel = proc.getDisplayLabel();
@@ -1187,6 +1331,7 @@ void ReverseVerbEditor::timerCallback()
         if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col) { k->slider.setColour (juce::Slider::rotarySliderFillColourId, col); k->slider.repaint(); }
     gateUndo.setEnabled (proc.getUndoManager().canUndo());
     gateRedo.setEnabled (proc.getUndoManager().canRedo());
+    presetDeleteButton.setEnabled (presetCombo.getSelectedId() > (int) rv::factoryPresets().size());
 }
 
 void ReverseVerbEditor::paint (juce::Graphics& g)
@@ -1255,6 +1400,17 @@ void ReverseVerbEditor::resized()
     generateSnareButton.setBounds (genRow.removeFromLeft (64)); genRow.removeFromLeft (6);
     generateHatButton.setBounds (genRow.removeFromLeft (64));   genRow.removeFromLeft (6);
     generateClapButton.setBounds (genRow.removeFromLeft (64));
+
+    // preset row: recall/save/delete a full settings snapshot (independent of the loaded sample)
+    area.removeFromTop (8);
+    auto presetRow = area.removeFromTop (26);
+    presetLabel.setBounds (presetRow.removeFromLeft (72));
+    presetRow.removeFromLeft (6);
+    presetDeleteButton.setBounds (presetRow.removeFromRight (48)); presetRow.removeFromRight (6);
+    presetSaveButton.setBounds (presetRow.removeFromRight (64));   presetRow.removeFromRight (6);
+    presetNextButton.setBounds (presetRow.removeFromRight (32));   presetRow.removeFromRight (4);
+    presetPrevButton.setBounds (presetRow.removeFromRight (32));   presetRow.removeFromRight (6);
+    presetCombo.setBounds (presetRow);
 
     // shape + waveform
     area.removeFromTop (10);

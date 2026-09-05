@@ -6,6 +6,7 @@
 #include "MusicalTime.h"
 #include "RenderedSample.h"
 #include "SampleGenerator.h"
+#include "PresetManager.h"
 
 namespace IDs
 {
@@ -73,6 +74,11 @@ public:
     bool generateSample (rv::GeneratedSampleType type);
     juce::String getDisplayLabel() const;
 
+    juce::ValueTree buildPresetState();
+    void applyPresetState (const juce::ValueTree& state, const juce::String& presetName);
+    void applyFactoryPreset (const rv::FactoryPreset&);
+    juce::String getCurrentPresetName() const { return currentPresetName; }
+
     void triggerPreview() { triggerRequest = 1; }
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
@@ -133,6 +139,7 @@ private:
     juce::Array<juce::File> folderFiles;
     int currentIndex = -1;
     juce::String generatedLabel;
+    juce::String currentPresetName;
 
     std::shared_ptr<const RenderedSample> rendered;
     std::shared_ptr<const rv::GatePattern> gatePattern;

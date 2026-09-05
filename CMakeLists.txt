@@ -41,7 +41,8 @@ target_sources(ReverseVerb PRIVATE
     Source/GatePatternState.cpp
     Source/MusicalTime.cpp
     Source/RenderedSample.cpp
-    Source/SampleGenerator.cpp)
+    Source/SampleGenerator.cpp
+    Source/PresetManager.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
     JUCE_WEB_BROWSER=0
@@ -67,13 +68,15 @@ if(BUILD_TESTING)
         Tests/GateIntegrationTests.cpp
         Tests/GatePatternClipboardTests.cpp
         Tests/SampleGeneratorTests.cpp
+        Tests/PresetManagerTests.cpp
         Source/GateEngine.cpp
         Source/GatedMixer.cpp
         Source/GatePatternClipboard.cpp
         Source/GatePatternState.cpp
         Source/RenderedSample.cpp
         Source/MusicalTime.cpp
-        Source/SampleGenerator.cpp)
+        Source/SampleGenerator.cpp
+        Source/PresetManager.cpp)
 
     target_compile_definitions(ReverseVerbTests PRIVATE
         JUCE_UNIT_TESTS=1

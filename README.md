@@ -12,6 +12,7 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 - A free (unsynced) Length knob that stretches the tail up to 64 seconds
 - Time-signature-aware bars and waveform grids using the host BPM and meter
 - Built-in sample generator: synthesize a snare, hi-hat, or clap one-shot to feed straight into the Rise/Fall engine
+- Preset system: factory presets covering short/long, Rise/Fall, synced/free, and gated/pitch-swept starting points, plus save/recall/delete of your own presets (independent of whichever sample is loaded)
 - 16/32-step tempo-synced gator with variable step levels
 - Seven gate shapes: Square, Smooth, Ramp Up, Ramp Down, Triangle, Sine, and Curved
 - Gate Depth, Smooth, Swing, Phase, Note/Host retrigger, and Swell/Hit/Both targeting
