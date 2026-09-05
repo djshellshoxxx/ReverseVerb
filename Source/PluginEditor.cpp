@@ -1613,6 +1613,12 @@ void ReverseVerbEditor::showPage (Page page)
     for (auto* c : fxPage)    c->setVisible (page == Page::fx);
     for (auto* c : gatorPage) c->setVisible (page == Page::gator);
     resized();
+    // resized() rebuilds `groups` for whichever page is now active, but the
+    // group panels/labels themselves are painted directly onto the editor's
+    // own background in paint() - without an explicit repaint here, the
+    // previous page's panel outlines and labels (e.g. "REVERB", "TEMPO")
+    // stay on screen underneath the newly-shown controls.
+    repaint();
 }
 
 ReverseVerbEditor::~ReverseVerbEditor() { setLookAndFeel (nullptr); }
