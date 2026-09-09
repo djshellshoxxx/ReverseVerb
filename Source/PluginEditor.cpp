@@ -1486,22 +1486,11 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kWidth = &makeKnob (IDs::width, "WIDTH");    kGap = &makeKnob (IDs::gap, "DELAY");
     kTail = &makeKnob (IDs::tail, "LENGTH");     kShape = &makeKnob (IDs::shape, "SHAPE");   kTone = &makeKnob (IDs::tone, "COLOR");
     kBass = &makeKnob (IDs::basscut, "BASS CUT");
-    kStretch = &makeKnob (IDs::stretch, "STRETCH");
     kDry = &makeKnob (IDs::dry, "HIT");          kWet = &makeKnob (IDs::wet, "SWELL");
-    kPitch = &makeKnob (IDs::pitch, "PITCH");
-    kTranspose = &makeKnob (IDs::transpose, "TRANSPOSE");
-    kVolStart = &makeKnob (IDs::volStart, "START"); kVolEnd = &makeKnob (IDs::volEnd, "END"); kVolTension = &makeKnob (IDs::volTension, "TENSION");
-    kPanStart = &makeKnob (IDs::panStart, "START"); kPanEnd = &makeKnob (IDs::panEnd, "END"); kPanTension = &makeKnob (IDs::panTension, "TENSION");
     kLfoRate = &makeKnob (IDs::lfoRate, "RATE"); kLfoDepth = &makeKnob (IDs::lfoDepth, "DEPTH"); kLfoShape = &makeKnob (IDs::lfoShape, "SHAPE");
-    kGateDepth = &makeKnob (IDs::gateDepth, "DEPTH");
-    kGateSmooth = &makeKnob (IDs::gateSmooth, "SMOOTH");
-    kGateSwing = &makeKnob (IDs::gateSwing, "SWING");
-    kGatePhase = &makeKnob (IDs::gatePhase, "PHASE");
     kBpm = &makeKnob (IDs::manualBpm, "BPM");
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, hitCol);
-    kTranspose->slider.setTooltip ("Transposes the whole rendered hit and tail by a fixed amount, independent of the PITCH sweep above. Right-click for host automation.");
     kBpm->slider.setTooltip ("Manual tempo used when HOST BPM is off. Right-click for host automation.");
-    kStretch->slider.setTooltip ("Time-stretches the loaded sample itself (pitch unchanged) so it can span a whole long riser or faller, not just the reverb tail. Right-click for host automation.");
     kLfoShape->slider.setTooltip ("Morphs the LFO's wave from round (sine) to square.");
 
     addAndMakeVisible (lfoTargetCombo);
@@ -1594,20 +1583,16 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
                  &kTail->slider, &kTail->label, &kShape->slider, &kShape->label,
                  &kTone->slider, &kTone->label, &kBass->slider, &kBass->label,
                  &kDry->slider, &kDry->label, &kWet->slider, &kWet->label };
-    modPage = { &kPitch->slider, &kPitch->label, &rangeLabel, &rangeCombo, &pitchTension,
-                &kTranspose->slider, &kTranspose->label, &kStretch->slider, &kStretch->label,
-                &kVolStart->slider, &kVolStart->label, &kVolEnd->slider, &kVolEnd->label, &kVolTension->slider, &kVolTension->label,
-                &kPanStart->slider, &kPanStart->label, &kPanEnd->slider, &kPanEnd->label, &kPanTension->slider, &kPanTension->label,
-                &kLfoRate->slider, &kLfoRate->label, &kLfoDepth->slider, &kLfoDepth->label, &kLfoShape->slider, &kLfoShape->label,
-                &lfoTargetLabel, &lfoTargetCombo, &lfoSyncToggle, &lfoSyncDivisionCombo };
+    modPage = { &rangeLabel, &rangeCombo, &pitchTension,
+                &kLfoRate->slider, &kLfoRate->label, &kLfoDepth->slider, &kLfoDepth->label,
+                &kLfoShape->slider, &kLfoShape->label, &lfoTargetLabel, &lfoTargetCombo,
+                &lfoSyncToggle, &lfoSyncDivisionCombo };
     fxPage = { &fxEnabledToggle, &kFxTime->slider, &kFxTime->label, &kFxFeedback->slider, &kFxFeedback->label,
                &kFxModRate->slider, &kFxModRate->label, &kFxModDepth->slider, &kFxModDepth->label,
                &kFxMix->slider, &kFxMix->label, &fxOrderLabel, &fxOrderCombo,
                &fxSyncToggle, &fxSyncDivisionCombo };
-    gatorPage = { &gateToggle, &gateStepsCombo, &gateRateCombo, &gateRetriggerCombo, &gateTargetCombo, &gateShapeCombo,
-                  &kGateDepth->slider, &kGateDepth->label, &kGateSmooth->slider, &kGateSmooth->label,
-                  &kGateSwing->slider, &kGateSwing->label, &kGatePhase->slider, &kGatePhase->label,
-                  &gateClear, &gateFill, &gateInvert, &gateRandom, &gateLeft, &gateRight,
+    gatorPage = { &gateToggle, &gateStepsCombo, &gateRateCombo, &gateRetriggerCombo, &gateTargetCombo,
+                  &gateShapeCombo, &gateClear, &gateFill, &gateInvert, &gateRandom, &gateLeft, &gateRight,
                   &gateCopy, &gatePaste, &gateUndo, &gateRedo, &gatePatternEditor };
 
     addChildComponent (help);
@@ -1619,8 +1604,53 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     timerCallback();
 }
 
+void ReverseVerbEditor::ensurePageCreated (Page page)
+{
+    if (page == Page::mod && ! modPageCreated) createModPage();
+    if (page == Page::gator && ! gatorPageCreated) createGatorPage();
+}
+
+void ReverseVerbEditor::createModPage()
+{
+    kPitch = &makeKnob (IDs::pitch, "PITCH");
+    kTranspose = &makeKnob (IDs::transpose, "TRANSPOSE");
+    kStretch = &makeKnob (IDs::stretch, "STRETCH");
+    kVolStart = &makeKnob (IDs::volStart, "START");
+    kVolEnd = &makeKnob (IDs::volEnd, "END");
+    kVolTension = &makeKnob (IDs::volTension, "TENSION");
+    kPanStart = &makeKnob (IDs::panStart, "START");
+    kPanEnd = &makeKnob (IDs::panEnd, "END");
+    kPanTension = &makeKnob (IDs::panTension, "TENSION");
+    kTranspose->slider.setTooltip ("Transposes the whole rendered hit and tail by a fixed amount, independent of the PITCH sweep above. Right-click for host automation.");
+    kStretch->slider.setTooltip ("Time-stretches the loaded sample itself (pitch unchanged) so it can span a whole long riser or faller, not just the reverb tail. Right-click for host automation.");
+
+    modPage = { &kPitch->slider, &kPitch->label, &rangeLabel, &rangeCombo, &pitchTension,
+                &kTranspose->slider, &kTranspose->label, &kStretch->slider, &kStretch->label,
+                &kVolStart->slider, &kVolStart->label, &kVolEnd->slider, &kVolEnd->label, &kVolTension->slider, &kVolTension->label,
+                &kPanStart->slider, &kPanStart->label, &kPanEnd->slider, &kPanEnd->label, &kPanTension->slider, &kPanTension->label,
+                &kLfoRate->slider, &kLfoRate->label, &kLfoDepth->slider, &kLfoDepth->label, &kLfoShape->slider, &kLfoShape->label,
+                &lfoTargetLabel, &lfoTargetCombo, &lfoSyncToggle, &lfoSyncDivisionCombo };
+    modPageCreated = true;
+}
+
+void ReverseVerbEditor::createGatorPage()
+{
+    kGateDepth = &makeKnob (IDs::gateDepth, "DEPTH");
+    kGateSmooth = &makeKnob (IDs::gateSmooth, "SMOOTH");
+    kGateSwing = &makeKnob (IDs::gateSwing, "SWING");
+    kGatePhase = &makeKnob (IDs::gatePhase, "PHASE");
+
+    gatorPage = { &gateToggle, &gateStepsCombo, &gateRateCombo, &gateRetriggerCombo, &gateTargetCombo, &gateShapeCombo,
+                  &kGateDepth->slider, &kGateDepth->label, &kGateSmooth->slider, &kGateSmooth->label,
+                  &kGateSwing->slider, &kGateSwing->label, &kGatePhase->slider, &kGatePhase->label,
+                  &gateClear, &gateFill, &gateInvert, &gateRandom, &gateLeft, &gateRight,
+                  &gateCopy, &gatePaste, &gateUndo, &gateRedo, &gatePatternEditor };
+    gatorPageCreated = true;
+}
+
 void ReverseVerbEditor::showPage (Page page)
 {
+    ensurePageCreated (page);
     currentPage = page;
     for (auto* c : mainPage)  c->setVisible (page == Page::main);
     for (auto* c : modPage)   c->setVisible (page == Page::mod);

@@ -263,12 +263,12 @@ private:
     HelpOverlay help;
 
     std::vector<std::unique_ptr<Knob>> knobs;
-    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kStretch, *kShape, *kTone, *kBass,
-         *kDry, *kWet, *kPitch, *kTranspose, *kVolStart, *kVolEnd, *kVolTension,
-         *kPanStart, *kPanEnd, *kPanTension,
-         *kLfoRate, *kLfoDepth, *kLfoShape,
-         *kFxTime, *kFxFeedback, *kFxModRate, *kFxModDepth, *kFxMix,
-         *kGateDepth, *kGateSmooth, *kGateSwing, *kGatePhase, *kBpm;
+    Knob *kSize {}, *kDecay {}, *kDamp {}, *kDiff {}, *kEr {}, *kSep {}, *kWidth {}, *kGap {}, *kTail {}, *kStretch {}, *kShape {}, *kTone {}, *kBass {},
+         *kDry {}, *kWet {}, *kPitch {}, *kTranspose {}, *kVolStart {}, *kVolEnd {}, *kVolTension {},
+         *kPanStart {}, *kPanEnd {}, *kPanTension {},
+         *kLfoRate {}, *kLfoDepth {}, *kLfoShape {},
+         *kFxTime {}, *kFxFeedback {}, *kFxModRate {}, *kFxModDepth {}, *kFxMix {},
+         *kGateDepth {}, *kGateSmooth {}, *kGateSwing {}, *kGatePhase {}, *kBpm {};
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;
 
@@ -279,6 +279,10 @@ private:
     Page currentPage = Page::main;
     juce::TextButton tabMain { "MAIN" }, tabMod { "MOD" }, tabFx { "FX" }, tabGator { "GATOR" };
     std::vector<juce::Component*> mainPage, modPage, fxPage, gatorPage;
+    bool modPageCreated = false, gatorPageCreated = false;
+    void ensurePageCreated (Page);
+    void createModPage();
+    void createGatorPage();
     void showPage (Page);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReverseVerbEditor)
