@@ -1,6 +1,6 @@
 # ReverseVerb 2.0
 
-Tempo-shaped reverb rises and falls for snares, hats, claps, and other one-shots. ReverseVerb builds VST3 and Standalone formats on Windows/Linux, plus VST3, AU, and Standalone on macOS with JUCE 8.0.4.
+Tempo-shaped reverb rises and falls for snares, hats, claps, and other one-shots. ReverseVerb 2.0 currently supports Windows x64 and builds VST3 and Standalone formats with JUCE 8.0.4.
 
 Load a hit, choose **Rise** for reversed reverb before the transient or **Fall** for a forward decay after it, then trigger the result from MIDI. Browse a sample folder with `<` `>`, drag the processed result into your DAW, or export a WAV.
 
@@ -50,15 +50,7 @@ Load a hit, choose **Rise** for reversed reverb before the transient or **Fall**
 
 ## Reproducible developer build
 
-Requirements: CMake 3.22+, a C++17 compiler, and the normal JUCE platform development packages. The bootstrap scripts create a local Python environment with pinned CMake/Ninja versions when those tools are unavailable.
-
-Linux/macOS:
-
-```sh
-./scripts/bootstrap-dev.sh debug
-cmake --build --preset build-debug --target ReverseVerbTests ReverseVerb_VST3 ReverseVerb_Standalone
-ctest --preset test-debug
-```
+Requirements: Windows x64, CMake 3.22+, Visual Studio 2022 with Desktop development with C++, and JUCE 8.0.4. The PowerShell bootstrap creates a local Python environment with pinned CMake/Ninja versions when those tools are unavailable.
 
 Windows PowerShell:
 
@@ -68,17 +60,17 @@ cmake --build --preset build-windows-debug --target ReverseVerbTests ReverseVerb
 ctest --preset test-windows-debug
 ```
 
-Use `release`, `build-release`, and `test-release` for release builds on Linux/macOS. Use `build-windows-release` and `test-windows-release` on Windows. macOS also provides the `ReverseVerb_AU` target.
+Use `build-windows-release` and `test-windows-release` for the Windows Release configuration.
 
 To reuse an existing JUCE 8.0.4 checkout instead of downloading it:
 
-```sh
-cmake --preset release -DRV_JUCE_SOURCE_DIR=/absolute/path/to/JUCE
+```powershell
+cmake --preset windows -DRV_JUCE_SOURCE_DIR=C:\absolute\path\to\JUCE
 ```
 
 ## Automated verification
 
-Every v2 branch and pull request builds Debug and Release on Windows, macOS, and Linux, runs the JUCE/CTest regression suite, verifies pinned pluginval 1.0.4 archives by SHA-256, and validates VST3 (plus AU on macOS) at strictness level 5. Release plugins and validator logs are uploaded as workflow artifacts.
+Every v2 branch and pull request builds Debug and Release on Windows, runs the JUCE/CTest regression suite, verifies the pinned Windows pluginval 1.0.4 archive by SHA-256, and validates VST3 at strictness level 5. Windows Release plugins and validator logs are uploaded as workflow artifacts. Release readiness requires a green Windows CI job plus the manual FL Studio checklist below.
 
 If PowerShell blocks scripts: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in an admin PowerShell.
 

@@ -1,0 +1,38 @@
+cmake_minimum_required(VERSION 3.22)
+
+get_filename_component(REPO_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+file(READ "${REPO_DIR}/CMakeLists.txt" CMAKE_TEXT)
+file(READ "${REPO_DIR}/CMakePresets.json" PRESETS_TEXT)
+file(READ "${REPO_DIR}/README.md" README_TEXT)
+
+function(require_match TEXT_VALUE PATTERN DESCRIPTION)
+    if(NOT "${TEXT_VALUE}" MATCHES "${PATTERN}")
+        message(FATAL_ERROR "Missing ${DESCRIPTION}")
+    endif()
+endfunction()
+
+function(reject_match TEXT_VALUE PATTERN DESCRIPTION)
+    if("${TEXT_VALUE}" MATCHES "${PATTERN}")
+        message(FATAL_ERROR "Found unsupported ${DESCRIPTION}")
+    endif()
+endfunction()
+
+require_match("${CMAKE_TEXT}" "if\\(NOT WIN32\\)" "non-Windows guard")
+require_match("${CMAKE_TEXT}" "ReverseVerb currently supports Windows only" "Windows-only error")
+require_match("${CMAKE_TEXT}" "FORMATS[ \t]+VST3[ \t]+Standalone" "VST3/Standalone formats")
+reject_match("${CMAKE_TEXT}" "FORMATS[^\n]*AU" "AU format")
+reject_match("${PRESETS_TEXT}" "ninja-base" "Ninja base preset")
+reject_match("${PRESETS_TEXT}" "\"name\"[ \t]*:[ \t]*\"debug\"" "generic debug preset")
+reject_match("${PRESETS_TEXT}" "\"name\"[ \t]*:[ \t]*\"release\"" "generic release preset")
+require_match("${PRESETS_TEXT}" "build-windows-debug" "Windows Debug build preset")
+require_match("${PRESETS_TEXT}" "build-windows-release" "Windows Release build preset")
+
+require_match("${README_TEXT}" "Windows x64" "Windows x64 support statement")
+require_match("${README_TEXT}" "VST3 and Standalone" "supported formats")
+require_match("${README_TEXT}" "build-windows-debug" "Windows Debug instructions")
+require_match("${README_TEXT}" "build-windows-release" "Windows Release instructions")
+reject_match("${README_TEXT}" "Linux/macOS" "Linux/macOS instructions")
+reject_match("${README_TEXT}" "ReverseVerb_AU" "AU build target")
+reject_match("${README_TEXT}" "Windows/Linux" "Windows/Linux support statement")
+
+message(STATUS "Windows-only configuration policy passed")

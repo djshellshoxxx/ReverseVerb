@@ -227,7 +227,7 @@ private:
     juce::ComboBox presetCombo;
     juce::TextButton presetPrevButton { "<" }, presetNextButton { ">" }, presetSaveButton { "SAVE" }, presetDeleteButton { "DEL" };
     juce::StringArray userPresetNames;
-    void rebuildPresetCombo (int itemIdToSelect = -1);
+    void rebuildPresetCombo (int itemIdToSelect = -1, bool rescanUserPresets = true);
     void loadSelectedPreset();
     void promptSavePreset();
     void promptDeletePreset();

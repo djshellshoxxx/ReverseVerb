@@ -9,6 +9,7 @@
 #include "RenderedSample.h"
 #include "SampleGenerator.h"
 #include "PresetManager.h"
+#include "SampleLoadService.h"
 
 namespace IDs
 {
@@ -48,6 +49,7 @@ inline float tensionCurve (float x, float t)
 
 class ReverseVerbProcessor : public juce::AudioProcessor,
                              private juce::Timer,
+                             private juce::AsyncUpdater,
                              private juce::AudioProcessorValueTreeState::Listener
 {
 private:
@@ -141,8 +143,10 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void parameterChanged (const juce::String&, float) override;
     void timerCallback() override;
+    void handleAsyncUpdate() override;
     void render();
-    void refreshFolderList (const juce::File& f);
+    void requestSampleLoad (const juce::File&, bool previewAfter);
+    void requestRender();
     void publishGatePattern (const rv::GatePattern&);
     void storeGatePatternInState (const rv::GatePattern&, juce::UndoManager*);
 
@@ -161,6 +165,19 @@ private:
                       const rv::HostTiming&, bool gateEnabled);
 
     juce::AudioFormatManager formatManager;
+    juce::ThreadPool backgroundPool { 1 };
+    struct PendingSampleLoad
+    {
+        juce::uint64 generation = 0;
+        rv::SampleLoadResult result;
+        bool previewAfter = false;
+    };
+    juce::CriticalSection pendingLoadLock;
+    std::unique_ptr<PendingSampleLoad> pendingSampleLoad;
+    std::atomic<juce::uint64> sampleLoadGeneration { 0 };
+    std::atomic<bool> renderInFlight { false };
+    std::atomic<int> pendingLatency { -1 };
+    std::atomic<bool> pendingPreview { false };
     juce::CriticalSection sourceLock;
     juce::AudioBuffer<float> sourceBuffer;
     double sourceSR = 44100.0;
@@ -184,8 +201,9 @@ private:
     std::atomic<double> hostPpqPosition { 0.0 }, hostLoopStartPpq { 0.0 }, hostLoopEndPpq { 0.0 };
     std::atomic<bool> hostHasPpq { false }, hostIsPlaying { false }, hostIsLooping { false }, hostHasLoopRange { false };
     std::atomic<bool> useV2SyncDivision { true };
-    double lastRenderBpm = 0.0;
-    rv::TimeSignature lastRenderTimeSignature {};
+    std::atomic<double> lastRenderBpm { 0.0 };
+    std::atomic<int> lastRenderTimeSignatureNumerator { 4 };
+    std::atomic<int> lastRenderTimeSignatureDenominator { 4 };
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
 

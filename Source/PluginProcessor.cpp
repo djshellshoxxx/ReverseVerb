@@ -7,10 +7,27 @@
 #include <cmath>
 #include <limits>
 #include <new>
+#include <functional>
 
 // ---------------- Freeverb-style reverb with size / decay / damp / diffusion / separation / width / ER ----------------
 namespace
 {
+    class FunctionJob final : public juce::ThreadPoolJob
+    {
+    public:
+        explicit FunctionJob (std::function<void()> task)
+            : ThreadPoolJob ("ReverseVerb background work"), function (std::move (task)) {}
+
+        JobStatus runJob() override
+        {
+            if (! shouldExit()) function();
+            return jobHasFinished;
+        }
+
+    private:
+        std::function<void()> function;
+    };
+
     struct Comb
     {
         std::vector<float> buf; int idx = 0; float store = 0, fb = 0, d1 = 0, d2 = 1;
@@ -283,7 +300,13 @@ ReverseVerbProcessor::ReverseVerbProcessor()
     startTimer (60);
 }
 
-ReverseVerbProcessor::~ReverseVerbProcessor() { stopTimer(); }
+ReverseVerbProcessor::~ReverseVerbProcessor()
+{
+    stopTimer();
+    cancelPendingUpdate();
+    ++sampleLoadGeneration;
+    backgroundPool.removeAllJobs (true, 10000);
+}
 
 void ReverseVerbProcessor::parameterChanged (const juce::String& parameterId, float)
 {
@@ -751,14 +774,61 @@ std::shared_ptr<const RenderedSample> ReverseVerbProcessor::getRendered() const
 
 void ReverseVerbProcessor::timerCallback()
 {
+    std::unique_ptr<PendingSampleLoad> completedLoad;
+    {
+        const juce::ScopedLock lock (pendingLoadLock);
+        completedLoad = std::move (pendingSampleLoad);
+    }
+    if (completedLoad != nullptr && completedLoad->generation == sampleLoadGeneration.load())
+    {
+        currentFile = completedLoad->result.file;
+        generatedLabel.clear();
+        if (completedLoad->result.succeeded())
+        {
+            {
+                const juce::ScopedLock sourceGuard (sourceLock);
+                sourceBuffer = std::move (completedLoad->result.audio);
+                sourceSR = completedLoad->result.sampleRate;
+            }
+            folderFiles = std::move (completedLoad->result.folderFiles);
+            currentIndex = completedLoad->result.currentIndex;
+            if (completedLoad->previewAfter)
+                previewAfterRender = true;
+            dirty = true;
+        }
+    }
+
     const auto timing = getHostTiming();
     if (param (IDs::sync) > 0.5f
         && (std::abs (timing.bpm - lastRenderBpm) > 0.01
-            || timing.timeSignature.numerator != lastRenderTimeSignature.numerator
-            || timing.timeSignature.denominator != lastRenderTimeSignature.denominator))
+            || timing.timeSignature.numerator != lastRenderTimeSignatureNumerator.load()
+            || timing.timeSignature.denominator != lastRenderTimeSignatureDenominator.load()))
         dirty = true;
-    if (dirty.exchange (false)) render();
-    if (previewAfterRender.exchange (false)) triggerPreview();
+    if (dirty.exchange (false)) requestRender();
+}
+
+void ReverseVerbProcessor::requestRender()
+{
+    if (renderInFlight.exchange (true))
+    {
+        dirty = true;
+        return;
+    }
+
+    backgroundPool.addJob (new FunctionJob ([this]
+    {
+        render();
+        renderInFlight = false;
+    }), true);
+}
+
+void ReverseVerbProcessor::handleAsyncUpdate()
+{
+    const auto latency = pendingLatency.exchange (-1);
+    if (latency >= 0)
+        setLatencySamples (latency);
+    if (pendingPreview.exchange (false))
+        triggerPreview();
 }
 
 // ---------------- render ----------------
@@ -774,7 +844,8 @@ void ReverseVerbProcessor::render()
     const double bpm = hostTiming.bpm;
     const auto direction = getDirection();
     lastRenderBpm = bpm;
-    lastRenderTimeSignature = hostTiming.timeSignature;
+    lastRenderTimeSignatureNumerator = hostTiming.timeSignature.numerator;
+    lastRenderTimeSignatureDenominator = hostTiming.timeSignature.denominator;
     out->sampleRate = sr;
     out->bpm = bpm;
     out->direction = direction;
@@ -1140,41 +1211,42 @@ void ReverseVerbProcessor::render()
     const int latency = latencySamplesFor (*out, param (IDs::align) > 0.5f);
     std::shared_ptr<const RenderedSample> immutableOut = std::move (out);
     std::atomic_store_explicit (&rendered, std::move (immutableOut), std::memory_order_release);
-    setLatencySamples (latency);
+    pendingLatency = latency;
+    if (previewAfterRender.exchange (false))
+        pendingPreview = true;
+    triggerAsyncUpdate();
 }
 
 // ---------------- samples ----------------
 
-void ReverseVerbProcessor::refreshFolderList (const juce::File& f)
-{
-    auto dir = f.getParentDirectory();
-    if (folderFiles.isEmpty() || folderFiles[0].getParentDirectory() != dir)
-    {
-        folderFiles = dir.findChildFiles (juce::File::findFiles, false, "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg");
-        folderFiles.sort();
-    }
-    currentIndex = folderFiles.indexOf (f);
-}
-
 bool ReverseVerbProcessor::loadSampleFile (const juce::File& f, bool previewAfter)
 {
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (f));
-    if (reader == nullptr || reader->lengthInSamples <= 0) return false;
-    const int len = (int) std::min<juce::int64> (reader->lengthInSamples,
-                                                 (juce::int64) (reader->sampleRate * 10.0));
-    juce::AudioBuffer<float> buf ((int) reader->numChannels, len);
-    reader->read (&buf, 0, len, 0, true, true);
-    { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = reader->sampleRate; }
-    currentFile = f;
-    generatedLabel.clear();
-    refreshFolderList (f);
-    if (previewAfter) previewAfterRender = true;
-    dirty = true;
+    if (! f.existsAsFile()) return false;
+    requestSampleLoad (f, previewAfter);
     return true;
+}
+
+void ReverseVerbProcessor::requestSampleLoad (const juce::File& file, bool previewAfter)
+{
+    const auto generation = ++sampleLoadGeneration;
+    currentFile = file;
+    generatedLabel.clear();
+    backgroundPool.addJob (new FunctionJob ([this, file, previewAfter, generation]
+    {
+        auto result = rv::loadSampleSnapshot (file, formatManager);
+        if (generation != sampleLoadGeneration.load()) return;
+        auto completed = std::make_unique<PendingSampleLoad>();
+        completed->generation = generation;
+        completed->result = std::move (result);
+        completed->previewAfter = previewAfter;
+        const juce::ScopedLock lock (pendingLoadLock);
+        pendingSampleLoad = std::move (completed);
+    }), true);
 }
 
 bool ReverseVerbProcessor::generateSample (rv::GeneratedSampleType type)
 {
+    ++sampleLoadGeneration;
     const auto sr = hostSampleRate.load();
     const double sampleRate = sr > 0.0 ? sr : 44100.0;
     const auto seed = (juce::uint32) juce::Random::getSystemRandom().nextInt();
@@ -1193,7 +1265,7 @@ bool ReverseVerbProcessor::generateSample (rv::GeneratedSampleType type)
 juce::String ReverseVerbProcessor::getDisplayLabel() const
 {
     if (generatedLabel.isNotEmpty()) return generatedLabel;
-    return currentFile.existsAsFile() ? currentFile.getFileName() : juce::String();
+    return currentFile != juce::File() ? currentFile.getFileName() : juce::String();
 }
 
 // ---------------- presets ----------------
@@ -1377,7 +1449,7 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
                 ccToParamIndex[(size_t) cc] = cc < ccMap.size() ? ccMap[cc].getIntValue() : -1;
         }
         juce::File f (state.getProperty ("file", "").toString());
-        if (f.existsAsFile()) loadSampleFile (f);
+        if (f != juce::File()) requestSampleLoad (f, false);
         undoManager.clearUndoHistory();
         dirty = true;
     }

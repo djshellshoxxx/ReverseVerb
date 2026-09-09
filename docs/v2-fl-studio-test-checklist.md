@@ -2,7 +2,7 @@
 
 Automated unit tests and pluginval cover DSP, state parsing, editor creation, and plugin-format behavior. The items below require a real FL Studio session and should be completed before calling a build release-ready.
 
-Record the FL Studio version, operating system, audio-device buffer size, ReverseVerb commit, and plugin format with the test results.
+Record the FL Studio version, operating system (`Windows`), audio-device buffer size, ReverseVerb commit, and plugin format with the test results.
 
 ## Installation and lifecycle
 

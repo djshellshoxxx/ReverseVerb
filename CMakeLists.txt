@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 project(ReverseVerb VERSION 2.0.0)
+
+if(NOT WIN32)
+    message(FATAL_ERROR "ReverseVerb currently supports Windows only")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -22,7 +27,7 @@ juce_add_plugin(ReverseVerb
     COMPANY_NAME "SheldonDavidson"
     PLUGIN_MANUFACTURER_CODE Shdv
     PLUGIN_CODE Rvrb
-    FORMATS VST3 AU Standalone
+    FORMATS VST3 Standalone
     PRODUCT_NAME "ReverseVerb"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
@@ -47,6 +52,7 @@ target_sources(ReverseVerb PRIVATE
     Source/EnvelopeState.cpp
     Source/TimeStretch.cpp
     Source/DelayChorus.cpp)
+target_sources(ReverseVerb PRIVATE Source/SampleLoadService.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
     JUCE_WEB_BROWSER=0
@@ -75,6 +81,7 @@ if(BUILD_TESTING)
         Tests/PresetManagerTests.cpp
         Tests/EnvelopeTests.cpp
         Tests/TimeStretchTests.cpp
+        Tests/SampleLoadServiceTests.cpp
         Source/GateEngine.cpp
         Source/GatedMixer.cpp
         Source/GatePatternClipboard.cpp
@@ -86,6 +93,7 @@ if(BUILD_TESTING)
         Source/Envelope.cpp
         Source/EnvelopeState.cpp
         Source/TimeStretch.cpp)
+    target_sources(ReverseVerbTests PRIVATE Source/SampleLoadService.cpp)
 
     target_compile_definitions(ReverseVerbTests PRIVATE
         JUCE_UNIT_TESTS=1
@@ -94,6 +102,7 @@ if(BUILD_TESTING)
 
     target_link_libraries(ReverseVerbTests PRIVATE
         juce::juce_audio_basics
+        juce::juce_audio_formats
         juce::juce_core
         juce::juce_data_structures
         juce::juce_recommended_config_flags

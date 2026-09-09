@@ -1276,7 +1276,21 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     };
     presetSaveButton.onClick = [this] { promptSavePreset(); };
     presetDeleteButton.onClick = [this] { promptDeletePreset(); };
-    rebuildPresetCombo();
+    // Populate built-ins immediately, but keep filesystem enumeration out of
+    // editor construction. Roaming/profile-backed AppData can otherwise make a
+    // brand-new instance appear to hang before its first paint.
+    rebuildPresetCombo (-1, false);
+    const juce::Component::SafePointer<ReverseVerbEditor> safeEditor (this);
+    juce::Thread::launch ([safeEditor]
+    {
+        auto names = rv::listUserPresetNames (rv::getUserPresetDirectory());
+        juce::MessageManager::callAsync ([safeEditor, names = std::move (names)] () mutable
+        {
+            if (safeEditor == nullptr) return;
+            safeEditor->userPresetNames = std::move (names);
+            safeEditor->rebuildPresetCombo (-1, false);
+        });
+    });
     if (const auto restoredName = proc.getCurrentPresetName(); restoredName.isNotEmpty())
     {
         const auto& factory = rv::factoryPresets();
@@ -1648,7 +1662,7 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
 
 // ---------------- Presets ----------------
 
-void ReverseVerbEditor::rebuildPresetCombo (int itemIdToSelect)
+void ReverseVerbEditor::rebuildPresetCombo (int itemIdToSelect, bool rescanUserPresets)
 {
     const auto previousId = itemIdToSelect >= 0 ? itemIdToSelect : presetCombo.getSelectedId();
     presetCombo.clear (juce::dontSendNotification);
@@ -1658,7 +1672,8 @@ void ReverseVerbEditor::rebuildPresetCombo (int itemIdToSelect)
     for (int i = 0; i < (int) factory.size(); ++i)
         presetCombo.addItem (factory[(size_t) i].name, i + 1);
 
-    userPresetNames = rv::listUserPresetNames (rv::getUserPresetDirectory());
+    if (rescanUserPresets)
+        userPresetNames = rv::listUserPresetNames (rv::getUserPresetDirectory());
     if (! userPresetNames.isEmpty())
     {
         presetCombo.addSeparator();
