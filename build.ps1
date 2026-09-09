@@ -26,18 +26,31 @@ Write-Host "Using compiler at: $vsPath"
 
 $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
 
-if (Test-Path "$root\build\CMakeCache.txt") {
-    if (-not (Select-String -Path "$root\build\CMakeCache.txt" -Pattern "Visual Studio" -Quiet)) { Remove-Item "$root\build" -Recurse -Force }
+# Nuke old build dir so cached toolchain settings don't stick around (fixes the C1060 heap error on rebuilds)
+if (Test-Path "$root\build") {
+    Write-Host "Removing old build directory to force clean reconfigure ..."
+    Remove-Item "$root\build" -Recurse -Force
 }
 
 $gen = "Visual Studio 17 2022"
 if ($vsPath -match "\\2026\\|\\18\\") { $gen = "Visual Studio 18 2026" }
 
-Write-Host "Configuring with generator '$gen' (downloads JUCE on first run) ..."
-cmake -S $root -B "$root\build" -G $gen -A x64
+# Pick a safe parallelism level based on installed RAM.
+# juce_graphics.cpp is a memory-hungry unity build; too many parallel cl.exe processes = out-of-heap.
+$ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+if     ($ramGB -ge 32) { $jobs = 4 }
+elseif ($ramGB -ge 16) { $jobs = 2 }
+else                   { $jobs = 1 }
+Write-Host "Detected ${ramGB}GB RAM - using $jobs parallel compile job(s)."
+
+Write-Host "Configuring with generator '$gen', host=x64 toolchain (downloads JUCE on first run) ..."
+# -T host=x64 forces the 64-bit hosted cl.exe so it isn't capped at ~2GB address space.
+# This is what actually fixes the "compiler is out of heap space" error.
+cmake -S $root -B "$root\build" -G $gen -A x64 -T host=x64
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
-Write-Host "Building ..."
-cmake --build "$root\build" --config Release --target ReverseVerb_VST3 ReverseVerb_Standalone
+
+Write-Host "Building with /maxcpucount:$jobs ..."
+cmake --build "$root\build" --config Release --target ReverseVerb_VST3 ReverseVerb_Standalone -- /maxcpucount:$jobs
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
 $dst = "C:\Program Files\Common Files\VST3\ReverseVerb.vst3"

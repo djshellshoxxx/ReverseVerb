@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - "v2*"
+      - "feature/v2-*"
+      - "codex/v2-*"
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reverseverb-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Cache JUCE source
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .cache/JUCE
+          key: juce-8.0.4-Windows
+
+      - name: Fetch pinned JUCE
+        shell: bash
+        run: |
+          if [ ! -f .cache/JUCE/CMakeLists.txt ]; then
+            mkdir -p .cache
+            git clone --branch 8.0.4 --depth 1 https://github.com/juce-framework/JUCE.git .cache/JUCE
+          fi
+
+      - name: Verify Windows-only project policy
+        shell: pwsh
+        run: |
+          cmake -P scripts/test-windows-only-config.cmake
+          cmake -P scripts/test-windows-only-ci.cmake
+
+      - name: Configure Debug
+        shell: pwsh
+        run: cmake --preset windows "-DRV_JUCE_SOURCE_DIR=${{ github.workspace }}/.cache/JUCE"
+
+      - name: Build and test Debug
+        shell: pwsh
+        run: |
+          cmake --build --preset build-windows-debug --target ReverseVerbTests ReverseVerb_VST3 ReverseVerb_Standalone
+          ctest --preset test-windows-debug
+
+      - name: Build and test Release
+        shell: pwsh
+        run: |
+          cmake --build --preset build-windows-release --target ReverseVerbTests ReverseVerb_VST3 ReverseVerb_Standalone
+          ctest --preset test-windows-release
+
+      - name: Download and verify pluginval 1.0.4
+        shell: bash
+        run: |
+          mkdir -p tools/pluginval validation-logs
+          curl --fail --location --silent --show-error \
+            "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip" \
+            --output tools/pluginval.zip
+          echo "c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab  tools/pluginval.zip" | sha256sum --check --strict
+          cd tools/pluginval
+          cmake -E tar xf ../pluginval.zip
+
+      - name: Validate Windows VST3
+        shell: bash
+        run: |
+          tools/pluginval/pluginval.exe \
+            --strictness-level 5 --validate-in-process --output-dir validation-logs \
+            "build/windows/ReverseVerb_artefacts/Release/VST3/ReverseVerb.vst3" \
+            2>&1 | tee validation-logs/pluginval-vst3.log
+
+      - name: Upload Windows Release artifacts and test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ReverseVerb-build-windows-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            build/windows/ReverseVerb_artefacts/Release/**
+            validation-logs/**
+            build/windows/Testing/Temporary/**

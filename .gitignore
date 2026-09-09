@@ -1,4 +1,6 @@
 build/
+build-*/
+.tools/
 *.user
 .vs/
 .DS_Store
