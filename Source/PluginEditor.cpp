@@ -649,6 +649,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     : AudioProcessorEditor (&p), proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension)
 {
     setLookAndFeel (&lnf);
+    applyTooltipSetting();
 
     title.setText ("REVERSE VERB", juce::dontSendNotification);
     title.setFont (juce::Font (juce::FontOptions (24.0f, juce::Font::bold)));
@@ -668,7 +669,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     countLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (countLabel);
 
-    for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &helpButton })
+    for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &optionsButton, &helpButton })
         addAndMakeVisible (b);
     for (auto* t : { &alignToggle, &syncToggle }) addAndMakeVisible (t);
     addAndMakeVisible (waveform);
@@ -696,6 +697,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     playButton.onClick   = [this] { proc.triggerPreview(); };
     resetButton.onClick  = [this] { proc.resetEdits(); };
     randomButton.onClick = [this] { proc.randomizeReverb(); };
+    optionsButton.onClick = [this] { showOptionsMenu(); };
     helpButton.onClick   = [this] { help.setVisible (true); help.toFront (true); };
 
     loadButton.onClick = [this]
@@ -726,6 +728,25 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kVolStart = &makeKnob (IDs::volStart, "START"); kVolEnd = &makeKnob (IDs::volEnd, "END"); kVolTension = &makeKnob (IDs::volTension, "TENSION");
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, hitCol);
 
+    prevButton.setTooltip ("Load the previous supported audio file in the current folder.");
+    nextButton.setTooltip ("Load the next supported audio file in the current folder.");
+    loadButton.setTooltip ("Load an audio sample. WAV, AIFF, FLAC, MP3 and OGG are supported.");
+    playButton.setTooltip ("Preview the current reverse-reverb result.");
+    exportButton.setTooltip ("Export the current processed result as a WAV file.");
+    resetButton.setTooltip ("Reset editable sound controls to their defaults.");
+    randomButton.setTooltip ("Randomize the reverse-reverb sound-design controls.");
+    optionsButton.setTooltip ("Open interface options, including the global tooltip switch.");
+    helpButton.setTooltip ("Open the complete ReverseVerb help guide.");
+    alignToggle.setTooltip ("Align the hit to the host timeline using plugin delay compensation.");
+    syncToggle.setTooltip ("Use host tempo divisions for reverse-swell length.");
+    syncCombo.setTooltip ("Choose the host-synced reverse-swell duration.");
+    rangeCombo.setTooltip ("Choose the available pitch-bend range.");
+    waveform.setTooltip ("Edit sample trim and volume-envelope points directly on the waveform.");
+    dragPad.setTooltip ("Drag the rendered result out to a DAW or file destination.");
+    pitchTension.setTooltip ("Adjust pitch-envelope tension. Double-click to reset.");
+
+
+    help.setTooltip ("ReverseVerb help overlay.");
     addChildComponent (help);
     setSize (1060, 720);
     startTimerHz (10);
@@ -742,6 +763,7 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
     s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 15);
     s.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
     s.setColour (juce::Slider::rotarySliderFillColourId, accent);
+    s.setTooltip ("Adjust " + textName + ". Double-click the value to type where supported.");
     addAndMakeVisible (s);
     k->label.setText (textName, juce::dontSendNotification);
     k->label.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
@@ -767,6 +789,35 @@ void ReverseVerbEditor::timerCallback()
     const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
     for (auto* k : { kTone, kBass, kWet, kTail, kShape })
         if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col) { k->slider.setColour (juce::Slider::rotarySliderFillColourId, col); k->slider.repaint(); }
+}
+
+void ReverseVerbEditor::applyTooltipSetting()
+{
+    if (tooltipsEnabled)
+    {
+        if (tooltipWindow == nullptr)
+            tooltipWindow = std::make_unique<juce::TooltipWindow> (this, 650);
+    }
+    else
+    {
+        tooltipWindow.reset();
+    }
+}
+
+void ReverseVerbEditor::showOptionsMenu()
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Interface");
+    menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&optionsButton),
+                        [this] (int result)
+                        {
+                            if (result == 1)
+                            {
+                                tooltipsEnabled = ! tooltipsEnabled;
+                                applyTooltipSetting();
+                            }
+                        });
 }
 
 void ReverseVerbEditor::paint (juce::Graphics& g)
@@ -816,6 +867,8 @@ void ReverseVerbEditor::resized()
     title.setBounds (titleArea.removeFromTop (28));
     subtitle.setBounds (titleArea);
     helpButton.setBounds (header.removeFromRight (34).reduced (0, 7));
+    header.removeFromRight (4);
+    optionsButton.setBounds (header.removeFromRight (76).reduced (0, 7));
     header.removeFromRight (10);
     auto browser = header.withTrimmedLeft (20);
     loadButton.setBounds (browser.removeFromRight (80).reduced (0, 7));
