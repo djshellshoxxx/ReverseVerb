@@ -47,7 +47,7 @@ private:
     float angle = 0.0f;
 };
 
-class WaveformDisplay : public juce::Component, private juce::Timer
+class WaveformDisplay : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
     explicit WaveformDisplay (ReverseVerbProcessor&);
@@ -74,7 +74,7 @@ private:
     bool moved = false;
 };
 
-class TensionBox : public juce::Component, private juce::Timer
+class TensionBox : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
     TensionBox (ReverseVerbProcessor& p, const juce::String& id) : proc (p), paramId (id) { startTimerHz (15); }
@@ -89,7 +89,7 @@ private:
     float downT = 0, shown = -9; int downY = 0;
 };
 
-class DragOutPad : public juce::Component
+class DragOutPad : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     explicit DragOutPad (ReverseVerbProcessor& p) : proc (p) {}
@@ -138,13 +138,15 @@ private:
     void timerCallback() override;
     Knob& makeKnob (const juce::String& id, const juce::String& text);
     void layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks);
+    void applyTooltipSetting();
+    void showOptionsMenu();
 
     ReverseVerbProcessor& proc;
     RVLookAndFeel lnf;
 
     juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
-                     exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, helpButton { "?" };
+                     exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, optionsButton { "OPTIONS" }, helpButton { "?" };
     juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
     juce::ComboBox syncCombo, rangeCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt;
@@ -155,6 +157,8 @@ private:
     DragOutPad dragPad;
     TensionBox pitchTension;
     HelpOverlay help;
+    std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+    bool tooltipsEnabled = true;
 
     std::vector<std::unique_ptr<Knob>> knobs;
     Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass, *kDry, *kWet, *kPitch, *kVolStart, *kVolEnd, *kVolTension;
