@@ -1,21 +1,17 @@
-MIT License
+# ReverseVerb Proprietary Source License
 
-Copyright (c) 2026 Sheldon Davidson
+Copyright © 2026 Sheldon Davidson. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Beginning with versions and commits released under this license, ReverseVerb source code, documentation, graphics, presets, specifications, tests, and other original project materials are proprietary except where a third-party component is expressly governed by its own license.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+No permission is granted to copy, modify, redistribute, sublicense, sell, publish, incorporate into another product, or create derivative works from material released under this proprietary license except under a separate written license from the copyright holder.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Compiled releases may be distributed under separate Free, Trial, Pro, commercial, educational, or OEM terms established by the copyright holder. Audio and other creative output produced through normal authorized use belongs to the user unless a separate agreement states otherwise.
+
+## Earlier MIT-licensed versions
+
+ReverseVerb versions and commits previously published under the MIT License remain licensed under the MIT terms that accompanied those versions. This license change is prospective and does not revoke rights already granted for those earlier MIT-licensed copies.
+
+Third-party components remain governed by their respective licenses.
+
+THE COVERED MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER IS NOT LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE MATERIALS OR THEIR USE.
