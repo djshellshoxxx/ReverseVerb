@@ -1,9 +1,9 @@
-# Copyright and Trademark Notice
+# ReverseVerb Copyright and Trademark Notice
 
-Copyright © 2026 Sheldon Davidson.
+Copyright © 2026 Sheldon Davidson. All rights reserved except for rights previously granted in specific MIT-licensed versions of ReverseVerb and rights provided by applicable third-party licenses.
 
-The software license in this repository governs rights in the source code and documentation. It does not grant trademark rights.
+**ReverseVerb™** and **Circuit Drift Labs™** are used as unregistered trademarks identifying the source of the current ReverseVerb product and related software.
 
-**Circuit Drift Labs™** and **ReverseVerb™** are used as unregistered trademarks identifying the source of this project and related software. No permission is granted to use those names, logos, trade dress, or branding in a way that suggests sponsorship, endorsement, affiliation, or origin from Circuit Drift Labs.
+The software license does not grant permission to use the ReverseVerb or Circuit Drift Labs names, logos, icons, trade dress, or branding in a way that suggests sponsorship, endorsement, affiliation, or origin from Circuit Drift Labs.
 
-The ™ symbol denotes a claimed unregistered mark; it does not represent trademark registration. Third-party product names and marks remain the property of their respective owners.
+The ™ symbol denotes a claimed unregistered trademark and does not represent trademark registration. Third-party trademarks remain the property of their respective owners.
