@@ -33,4 +33,7 @@ cmake --build build --config Release
 Options > Manage plugins > Find plugins. Add ReverseVerb to the Channel Rack as an instrument. Notes in the piano roll trigger it.
 
 ## License
-MIT
+
+Current and future development is proprietary. See `LICENSE`.
+
+Earlier versions and commits that were published under the MIT License remain available under the MIT terms that accompanied those versions.
