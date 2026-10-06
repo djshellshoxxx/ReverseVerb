@@ -746,7 +746,6 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     pitchTension.setTooltip ("Adjust pitch-envelope tension. Double-click to reset.");
 
 
-    help.setTooltip ("ReverseVerb help overlay.");
     addChildComponent (help);
     setSize (1060, 720);
     startTimerHz (10);
