@@ -168,10 +168,18 @@ ReverseVerbProcessor::ReverseVerbProcessor()
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
     rendered = std::make_shared<RenderedSample>();
-    startTimer (60);
+    renderThread = std::make_unique<RenderThread> (*this);
+    renderThread->startThread (juce::Thread::Priority::background);
+    startTimer (40);
 }
 
-ReverseVerbProcessor::~ReverseVerbProcessor() { stopTimer(); }
+ReverseVerbProcessor::~ReverseVerbProcessor()
+{
+    stopTimer();
+    renderThread->signalThreadShouldExit();
+    renderThread->notify();
+    renderThread->stopThread (5000);
+}
 
 void ReverseVerbProcessor::setParam (const juce::String& id, float value)
 {
@@ -206,7 +214,7 @@ void ReverseVerbProcessor::randomizeReverb()
 
 void ReverseVerbProcessor::prepareToPlay (double sampleRate, int)
 {
-    if (std::abs (sampleRate - hostSampleRate) > 0.5) dirty = true;
+    if (std::abs (sampleRate - hostSampleRate.load()) > 0.5) dirty = true;
     hostSampleRate = sampleRate;
     for (auto& v : voices) v.active = false;
     playhead = -1;
@@ -297,99 +305,127 @@ std::shared_ptr<const RenderedSample> ReverseVerbProcessor::getRendered() const
 
 void ReverseVerbProcessor::timerCallback()
 {
-    if (param (IDs::sync) > 0.5f && std::abs (hostBpm.load() - lastRenderBpm) > 0.01) dirty = true;
-    if (dirty.exchange (false)) render();
-    if (previewAfterRender.exchange (false)) triggerPreview();
+    if (param (IDs::sync) > 0.5f && std::abs (hostBpm.load() - lastRenderBpm.load()) > 0.01) dirty = true;
+    if (dirty.exchange (false)) renderThread->notify();
+    const int lat = pendingLatency.exchange (-1);
+    if (lat >= 0 && lat != getLatencySamples()) setLatencySamples (lat);
 }
 
 // ---------------- render ----------------
 
 void ReverseVerbProcessor::render()
 {
-    juce::AudioBuffer<float> src; double srcSR;
-    { const juce::ScopedLock sl (sourceLock); src.makeCopyOf (sourceBuffer); srcSR = sourceSR; }
+    const juce::ScopedLock rl (renderMutex);
+    const bool wantPreview = previewAfterRender.exchange (false);   // taken before the source is read, so the source is already new
 
     auto out = std::make_shared<RenderedSample>();
-    const double sr = hostSampleRate;
+    const double sr = hostSampleRate.load();
     const double bpm = hostBpm.load();
     lastRenderBpm = bpm;
     out->sampleRate = sr;
 
-    if (src.getNumSamples() > 0 && srcSR > 0)
+    int version; double srcSR; bool haveSrc;
+    { const juce::ScopedLock sl (sourceLock); version = sourceVersion; srcSR = sourceSR; haveSrc = sourceBuffer.getNumSamples() > 0 && srcSR > 0; }
+
+    if (haveSrc)
     {
-        // 1. resample hit to host rate, stereo
-        const int srcLen = src.getNumSamples();
-        juce::AudioBuffer<float> padded (src.getNumChannels(), srcLen + 16);
-        padded.clear();
-        for (int ch = 0; ch < src.getNumChannels(); ++ch) padded.copyFrom (ch, 0, src, ch, 0, srcLen);
-        const double ratio = srcSR / sr;
-        const int hitLen = juce::jmax (1, (int) std::floor (srcLen / ratio));
-        juce::AudioBuffer<float> hit (2, hitLen);
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            juce::LagrangeInterpolator interp;
-            interp.process (ratio, padded.getReadPointer (juce::jmin (ch, padded.getNumChannels() - 1)), hit.getWritePointer (ch), hitLen);
-        }
-        const float hitMag = hit.getMagnitude (0, hitLen);
-        if (hitMag > 0.0f) hit.applyGain (0.9f / hitMag);
-
-        // 2. tail length (free or synced to BPM)
-        const int gapLen = (int) (param (IDs::gap) * 0.001f * sr);
-        double tailSec = param (IDs::tail);
         const bool sync = param (IDs::sync) > 0.5f;
-        int beats = 0;
-        if (sync)
+        const std::array<double, 17> key {{ (double) version, sr, sync ? bpm : 0.0, sync ? 1.0 : 0.0, sync ? (double) param (IDs::syncLen) : 0.0,
+                                            param (IDs::size), param (IDs::decay), param (IDs::damp), param (IDs::diff), param (IDs::sep),
+                                            param (IDs::width), param (IDs::er), param (IDs::gap), sync ? 0.0 : (double) param (IDs::tail),
+                                            param (IDs::tone), param (IDs::basscut), param (IDs::shape) }};
+
+        if (! cache.valid || cache.key != key)
         {
-            const int choice = juce::jlimit (0, 6, (int) param (IDs::syncLen));
-            beats = kSyncBeats[choice];
-            tailSec = juce::jmax (0.05, beats * 60.0 / bpm - hitLen / sr - gapLen / sr);
-        }
-        const int tailLen = (int) (tailSec * sr);
-        const int revLen  = hitLen + tailLen;
+            juce::AudioBuffer<float> src;
+            { const juce::ScopedLock sl (sourceLock); src.makeCopyOf (sourceBuffer); }
 
-        // 3. reverb
-        juce::AudioBuffer<float> rev (2, revLen);
-        rev.clear();
-        for (int ch = 0; ch < 2; ++ch) rev.copyFrom (ch, 0, hit, ch, 0, hitLen);
-        ReverbEngine engine;
-        engine.setup (sr, param (IDs::size), param (IDs::decay), param (IDs::damp), param (IDs::diff), param (IDs::sep), param (IDs::width), param (IDs::er));
-        engine.process (rev.getWritePointer (0), rev.getWritePointer (1), revLen);
-
-        // 4. reverse
-        for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
-
-        // 5. filters
-        auto applyIIR = [&] (const juce::IIRCoefficients& c, int passes)
-        {
-            for (int pass = 0; pass < passes; ++pass)
-                for (int ch = 0; ch < 2; ++ch) { juce::IIRFilter f; f.setCoefficients (c); f.reset(); f.processSamples (rev.getWritePointer (ch), revLen); }
-        };
-        const float hp = param (IDs::basscut);
-        if (hp > 21.0f) applyIIR (juce::IIRCoefficients::makeHighPass (sr, hp), 2);
-        const float lp = param (IDs::tone);
-        if (lp < 19900.0f) applyIIR (juce::IIRCoefficients::makeLowPass (sr, lp), 1);
-
-        // 6. shape, fade, normalize
-        const float s = param (IDs::shape);
-        if (std::abs (s) > 0.001f && revLen > 1)
-            for (int i = 0; i < revLen; ++i)
+            // 1. resample hit to host rate, stereo
+            const int srcLen = src.getNumSamples();
+            const double ratio = srcSR / sr;
+            const int hitLen = juce::jmax (1, (int) std::floor (srcLen / ratio));
+            juce::AudioBuffer<float> hit (2, hitLen);
+            if (std::abs (ratio - 1.0) < 1.0e-9)
             {
-                const float x = (float) i / (float) (revLen - 1);
-                const float g = s > 0.0f ? std::pow (x, 4.0f * s) : 1.0f + (-s) * 3.0f * (1.0f - x);
-                for (int ch = 0; ch < 2; ++ch) rev.getWritePointer (ch)[i] *= g;
+                for (int ch = 0; ch < 2; ++ch) hit.copyFrom (ch, 0, src, juce::jmin (ch, src.getNumChannels() - 1), 0, hitLen);
             }
-        rev.applyGainRamp (0, juce::jmin (revLen, (int) (sr * 0.01)), 0.0f, 1.0f);
-        const float revMag = rev.getMagnitude (0, revLen);
-        if (revMag > 0.0f) rev.applyGain (0.9f / revMag);
+            else
+            {
+                juce::AudioBuffer<float> padded (src.getNumChannels(), srcLen + 16);
+                padded.clear();
+                for (int ch = 0; ch < src.getNumChannels(); ++ch) padded.copyFrom (ch, 0, src, ch, 0, srcLen);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    juce::LagrangeInterpolator interp;
+                    interp.process (ratio, padded.getReadPointer (juce::jmin (ch, padded.getNumChannels() - 1)), hit.getWritePointer (ch), hitLen);
+                }
+            }
+            const float hitMag = hit.getMagnitude (0, hitLen);
+            if (hitMag > 0.0f) hit.applyGain (0.9f / hitMag);
 
-        // 7. combine: swell + gap + hit
-        const int swellLen = revLen + gapLen;
-        const int fullLen = swellLen + hitLen;
-        juce::AudioBuffer<float> full (2, fullLen);
-        full.clear();
-        for (int ch = 0; ch < 2; ++ch) { full.copyFrom (ch, 0, rev, ch, 0, revLen); full.copyFrom (ch, swellLen, hit, ch, 0, hitLen); }
+            // 2. tail length (free or synced to BPM)
+            const int gapLen = (int) (param (IDs::gap) * 0.001f * sr);
+            double tailSec = param (IDs::tail);
+            int beats = 0;
+            if (sync)
+            {
+                const int choice = juce::jlimit (0, 6, (int) param (IDs::syncLen));
+                beats = kSyncBeats[choice];
+                tailSec = juce::jmax (0.05, beats * 60.0 / bpm - hitLen / sr - gapLen / sr);
+            }
+            const int tailLen = (int) (tailSec * sr);
+            const int revLen  = hitLen + tailLen;
+
+            // 3. reverb
+            juce::AudioBuffer<float> rev (2, revLen);
+            rev.clear();
+            for (int ch = 0; ch < 2; ++ch) rev.copyFrom (ch, 0, hit, ch, 0, hitLen);
+            ReverbEngine engine;
+            engine.setup (sr, param (IDs::size), param (IDs::decay), param (IDs::damp), param (IDs::diff), param (IDs::sep), param (IDs::width), param (IDs::er));
+            engine.process (rev.getWritePointer (0), rev.getWritePointer (1), revLen);
+
+            // 4. reverse
+            for (int ch = 0; ch < 2; ++ch) rev.reverse (ch, 0, revLen);
+
+            // 5. filters
+            auto applyIIR = [&] (const juce::IIRCoefficients& c, int passes)
+            {
+                for (int pass = 0; pass < passes; ++pass)
+                    for (int ch = 0; ch < 2; ++ch) { juce::IIRFilter f; f.setCoefficients (c); f.reset(); f.processSamples (rev.getWritePointer (ch), revLen); }
+            };
+            const float hp = param (IDs::basscut);
+            if (hp > 21.0f) applyIIR (juce::IIRCoefficients::makeHighPass (sr, hp), 2);
+            const float lp = param (IDs::tone);
+            if (lp < 19900.0f) applyIIR (juce::IIRCoefficients::makeLowPass (sr, lp), 1);
+
+            // 6. shape, fade, normalize
+            const float sh = param (IDs::shape);
+            if (std::abs (sh) > 0.001f && revLen > 1)
+                for (int i = 0; i < revLen; ++i)
+                {
+                    const float x = (float) i / (float) (revLen - 1);
+                    const float g = sh > 0.0f ? std::pow (x, 4.0f * sh) : 1.0f + (-sh) * 3.0f * (1.0f - x);
+                    for (int ch = 0; ch < 2; ++ch) rev.getWritePointer (ch)[i] *= g;
+                }
+            rev.applyGainRamp (0, juce::jmin (revLen, (int) (sr * 0.01)), 0.0f, 1.0f);
+            const float revMag = rev.getMagnitude (0, revLen);
+            if (revMag > 0.0f) rev.applyGain (0.9f / revMag);
+
+            // 7. combine: swell + gap + hit
+            const int swellLen = revLen + gapLen;
+            const int fullLen = swellLen + hitLen;
+            cache.full.setSize (2, fullLen);
+            cache.full.clear();
+            for (int ch = 0; ch < 2; ++ch) { cache.full.copyFrom (ch, 0, rev, ch, 0, revLen); cache.full.copyFrom (ch, swellLen, hit, ch, 0, hitLen); }
+            cache.hitLen = hitLen; cache.swellLen = swellLen; cache.beats = beats;
+            cache.key = key; cache.valid = true;
+        }
+
+        const auto& full = cache.full;
+        const int hitLen = cache.hitLen, swellLen = cache.swellLen;
+        const int fullLen = full.getNumSamples();
         out->fullLengthSec = fullLen / sr;
-        out->beats = beats;
+        out->beats = cache.beats;
 
         // 8. trim
         const int minTrim = juce::jlimit (1, fullLen, (int) (sr * 0.02));
@@ -417,7 +453,8 @@ void ReverseVerbProcessor::render()
             const float* fl = full.getReadPointer (0) + tStart;
             const float* fr = full.getReadPointer (1) + tStart;
             double p = 0.0;
-            while (p < trimLen - 1 && l.size() < (size_t) (sr * 60.0))
+            const size_t maxOut = (size_t) (sr * 60.0);
+            while (p < trimLen - 1 && l.size() < maxOut)
             {
                 const int i0 = (int) p; const float frac = (float) (p - i0);
                 l.push_back (fl[i0] + (fl[i0 + 1] - fl[i0]) * frac);
@@ -425,10 +462,11 @@ void ReverseVerbProcessor::render()
                 const float semis = pitchAmt * octaves * 12.0f * tensionCurve ((float) p / (float) trimLen, pitchT);
                 semiPerSample.push_back (semis);
                 if (hitIdx >= 0 && hitOut < 0 && p >= hitIdx) hitOut = (int) l.size() - 1;
-                p += std::pow (2.0, semis / 12.0);
+                p += std::exp2 ((double) semis * (1.0 / 12.0));
             }
             outBuf.setSize (2, (int) l.size());
-            for (size_t i = 0; i < l.size(); ++i) { outBuf.setSample (0, (int) i, l[i]); outBuf.setSample (1, (int) i, r[i]); }
+            std::copy (l.begin(), l.end(), outBuf.getWritePointer (0));
+            std::copy (r.begin(), r.end(), outBuf.getWritePointer (1));
         }
         else
         {
@@ -458,9 +496,15 @@ void ReverseVerbProcessor::render()
         out->hitIndex = hitOut;
     }
 
+    else
+        cache.valid = false;
+
     const int latency = out->hitIndex > 0 ? out->hitIndex : 0;
-    { juce::SpinLock::ScopedLockType l (renderLock); rendered = out; }
-    setLatencySamples (param (IDs::align) > 0.5f ? latency : 0);
+    std::shared_ptr<RenderedSample> old;
+    { juce::SpinLock::ScopedLockType l (renderLock); old = std::move (rendered); rendered = out; }
+    retired[retireIdx++ & 1u] = std::move (old);      // frees the render from two swaps ago, here, not on the audio thread
+    pendingLatency = param (IDs::align) > 0.5f ? latency : 0;
+    if (wantPreview) triggerPreview();
 }
 
 // ---------------- samples ----------------
@@ -483,7 +527,7 @@ bool ReverseVerbProcessor::loadSampleFile (const juce::File& f, bool previewAfte
     const int len = (int) juce::jmin<juce::int64> (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 10.0));
     juce::AudioBuffer<float> buf ((int) reader->numChannels, len);
     reader->read (&buf, 0, len, 0, true, true);
-    { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = reader->sampleRate; }
+    { const juce::ScopedLock sl (sourceLock); sourceBuffer = std::move (buf); sourceSR = reader->sampleRate; ++sourceVersion; }
     currentFile = f;
     refreshFolderList (f);
     if (previewAfter) previewAfterRender = true;
@@ -513,7 +557,7 @@ void ReverseVerbProcessor::prevSample()
 
 bool ReverseVerbProcessor::exportWav (const juce::File& dest)
 {
-    if (dirty.exchange (false)) render();
+    { const juce::ScopedLock rl (renderMutex); if (dirty.exchange (false)) render(); }
     auto r = getRendered();
     if (r == nullptr || r->audio.getNumSamples() == 0) return false;
     const int n = r->audio.getNumSamples();

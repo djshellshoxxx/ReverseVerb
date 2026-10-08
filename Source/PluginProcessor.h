@@ -109,12 +109,30 @@ private:
     juce::Array<juce::File> folderFiles;
     int currentIndex = -1;
 
+    // Rendering runs on a background thread so the GUI never blocks on a reverb render.
+    struct RenderThread : public juce::Thread
+    {
+        explicit RenderThread (ReverseVerbProcessor& o) : juce::Thread ("ReverseVerb render"), owner (o) {}
+        void run() override { while (! threadShouldExit()) { wait (-1); if (threadShouldExit()) break; owner.render(); } }
+        ReverseVerbProcessor& owner;
+    };
+    std::unique_ptr<RenderThread> renderThread;
+    juce::CriticalSection renderMutex;                  // serialises render() (bg thread + export)
+
+    // Cached stage 1-7 (reverb, reverse, filters, shape, combine). Trim / pitch / volume edits reuse it.
+    struct RenderCache { std::array<double, 17> key {}; juce::AudioBuffer<float> full; int hitLen = 0, swellLen = 0, beats = 0; bool valid = false; };
+    RenderCache cache;
+    int sourceVersion = 0;                              // guarded by sourceLock
+    std::atomic<int> pendingLatency { -1 };             // applied on the message thread
+    std::array<std::shared_ptr<RenderedSample>, 2> retired;  // old renders freed on the render thread, never the audio thread
+    unsigned retireIdx = 0;
+
     mutable juce::SpinLock renderLock;
     std::shared_ptr<RenderedSample> rendered;
 
-    double hostSampleRate = 44100.0;
+    std::atomic<double> hostSampleRate { 44100.0 };
     std::atomic<double> hostBpm { 120.0 };
-    double lastRenderBpm = 0.0;
+    std::atomic<double> lastRenderBpm { 0.0 };
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
 
