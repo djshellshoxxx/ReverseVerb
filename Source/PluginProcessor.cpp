@@ -392,10 +392,11 @@ void ReverseVerbProcessor::render()
         out->beats = beats;
 
         // 8. trim
+        const int minTrim = juce::jlimit (1, fullLen, (int) (sr * 0.02));
         int tStart = (int) (param (IDs::trimStart) * fullLen);
         int tEnd   = (int) (param (IDs::trimEnd) * fullLen);
-        tStart = juce::jlimit (0, fullLen - 1, tStart);
-        tEnd   = juce::jlimit (tStart + (int) (sr * 0.02), fullLen, tEnd);
+        tStart = juce::jlimit (0, fullLen - minTrim, tStart);
+        tEnd   = juce::jlimit (tStart + minTrim, fullLen, tEnd);
         const int trimLen = tEnd - tStart;
         out->trimStartSec = tStart / sr;
         out->trimEndSec   = tEnd / sr;

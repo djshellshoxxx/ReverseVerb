@@ -8,19 +8,33 @@ FetchContent_Declare(JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
     GIT_TAG 8.0.4
     GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(JUCE)
+FetchContent_Declare(clap-juce-extensions
+    GIT_REPOSITORY https://github.com/free-audio/clap-juce-extensions.git
+    GIT_TAG main
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(JUCE clap-juce-extensions)
+
+if(APPLE)
+    set(RV_FORMATS ${RV_FORMATS})
+else()
+    set(RV_FORMATS VST3 Standalone)
+endif()
 
 juce_add_plugin(ReverseVerb
     COMPANY_NAME "SheldonDavidson"
     PLUGIN_MANUFACTURER_CODE Shdv
     PLUGIN_CODE Rvrb
-    FORMATS VST3 AU Standalone
+    FORMATS ${RV_FORMATS}
     PRODUCT_NAME "ReverseVerb"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
-    COPY_PLUGIN_AFTER_BUILD TRUE)
+    COPY_PLUGIN_AFTER_BUILD FALSE)
+
+clap_juce_extensions_plugin(TARGET ReverseVerb
+    CLAP_ID "com.circuitdriftlabs.reverseverb"
+    CLAP_FEATURES instrument "audio-effect" reverb)
 
 juce_generate_juce_header(ReverseVerb)
 
