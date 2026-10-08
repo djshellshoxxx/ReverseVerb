@@ -241,11 +241,12 @@ void WaveformDisplay::timerCallback()
 {
     auto r = proc.getRendered();
     bool dirty = false;
-    if (r != cached) { cached = r; rebuild(); dirty = true; }
+    if (r != cached) { cached = r; rebuild(); staticDirty = true; dirty = true; }
     const int ph = proc.getPlayheadPosition();
     if (ph != lastPlayhead) { lastPlayhead = ph; dirty = true; }
     const float tone = proc.param (IDs::tone), bass = proc.param (IDs::basscut);
     const float v0 = proc.param (IDs::volStart), v1 = proc.param (IDs::volEnd), vt = proc.param (IDs::volTension);
+    if (tone != lastTone || bass != lastBass) staticDirty = true;
     if (tone != lastTone || bass != lastBass || v0 != lastV0 || v1 != lastV1 || vt != lastVT) { lastTone = tone; lastBass = bass; lastV0 = v0; lastV1 = v1; lastVT = vt; dirty = true; }
     if (dirty) repaint();
 }
@@ -288,8 +289,12 @@ void WaveformDisplay::rebuild()
     build (hitPath, split, total);
 }
 
-void WaveformDisplay::paint (juce::Graphics& g)
+void WaveformDisplay::renderStatic (float scale)
 {
+    const int w = juce::jmax (1, juce::roundToInt ((float) getWidth() * scale)), h = juce::jmax (1, juce::roundToInt ((float) getHeight() * scale));
+    staticImage = juce::Image (juce::Image::ARGB, w, h, true);
+    juce::Graphics g (staticImage);
+    g.addTransform (juce::AffineTransform::scale ((float) w / (float) juce::jmax (1, getWidth()), (float) h / (float) juce::jmax (1, getHeight())));
     auto r = getLocalBounds().toFloat();
     auto p = plot();
     const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
@@ -302,11 +307,39 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (outline);
     g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
 
-    // grid
     g.setColour (outline.withAlpha (0.35f));
     for (int i = 1; i < 4; ++i) g.drawHorizontalLine ((int) (p.getY() + p.getHeight() * i / 4.0f), p.getX(), p.getRight());
     g.setColour (outline.withAlpha (0.8f));
     g.drawHorizontalLine ((int) p.getCentreY(), p.getX(), p.getRight());
+
+    auto drawWave = [&] (const juce::Path& path, juce::Colour c)
+    {
+        if (path.isEmpty()) return;
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillPath (path, juce::AffineTransform::translation (3.0f, 4.0f));
+        juce::ColourGradient body (c.brighter (0.5f), 0, p.getY(), c.darker (0.7f), 0, p.getBottom(), false);
+        body.addColour (0.5, c);
+        g.setGradientFill (body);
+        g.fillPath (path);
+        g.setColour (c.withAlpha (0.28f));
+        g.strokePath (path, juce::PathStrokeType (3.0f));
+        g.setColour (juce::Colours::white.withAlpha (0.35f));
+        g.strokePath (path, juce::PathStrokeType (0.8f));
+    };
+    drawWave (swellPath, col);
+    drawWave (hitPath, hitCol);
+}
+
+void WaveformDisplay::paint (juce::Graphics& g)
+{
+    auto p = plot();
+    const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
+
+    // static layer (background, grid, waveform) is cached as an image and only rebuilt when it changes
+    const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
+    const int wantW = juce::roundToInt ((float) getWidth() * scale), wantH = juce::roundToInt ((float) getHeight() * scale);
+    if (staticDirty || staticImage.getWidth() != wantW || staticImage.getHeight() != wantH) { renderStatic (scale); staticDirty = false; }
+    g.drawImage (staticImage, getLocalBounds().toFloat());
 
     if (total <= 0 || cached == nullptr)
     {
@@ -334,24 +367,6 @@ void WaveformDisplay::paint (juce::Graphics& g)
             g.drawLine (x, p.getY(), x, p.getBottom(), bar ? 1.5f : 1.0f);
         }
     }
-
-    // waveform with depth: shadow, gradient body, glow, top highlight
-    auto drawWave = [&] (const juce::Path& path, juce::Colour c)
-    {
-        if (path.isEmpty()) return;
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillPath (path, juce::AffineTransform::translation (3.0f, 4.0f));
-        juce::ColourGradient body (c.brighter (0.5f), 0, p.getY(), c.darker (0.7f), 0, p.getBottom(), false);
-        body.addColour (0.5, c);
-        g.setGradientFill (body);
-        g.fillPath (path);
-        g.setColour (c.withAlpha (0.28f));
-        g.strokePath (path, juce::PathStrokeType (3.0f));
-        g.setColour (juce::Colours::white.withAlpha (0.35f));
-        g.strokePath (path, juce::PathStrokeType (0.8f));
-    };
-    drawWave (swellPath, col);
-    drawWave (hitPath, hitCol);
 
     if (hitIndex >= 0)
     {

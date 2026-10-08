@@ -39,10 +39,10 @@ public:
 class DiffusionShape : public juce::Component, private juce::Timer
 {
 public:
-    explicit DiffusionShape (ReverseVerbProcessor& p) : proc (p) { setInterceptsMouseClicks (false, false); startTimerHz (30); }
+    explicit DiffusionShape (ReverseVerbProcessor& p) : proc (p) { setInterceptsMouseClicks (false, false); startTimerHz (20); }
     void paint (juce::Graphics&) override;
 private:
-    void timerCallback() override { angle += 0.012f; repaint(); }
+    void timerCallback() override { angle += 0.018f; repaint(); }
     ReverseVerbProcessor& proc;
     float angle = 0.0f;
 };
@@ -52,7 +52,7 @@ class WaveformDisplay : public juce::Component, public juce::SettableTooltipClie
 public:
     explicit WaveformDisplay (ReverseVerbProcessor&);
     void paint (juce::Graphics&) override;
-    void resized() override { rebuild(); }
+    void resized() override { rebuild(); staticDirty = true; }
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -63,6 +63,9 @@ private:
     void rebuild();
     juce::Rectangle<float> plot() const;
     float volY (float level) const;
+    void renderStatic (float scale);
+    juce::Image staticImage;
+    bool staticDirty = true;
     ReverseVerbProcessor& proc;
     std::shared_ptr<const RenderedSample> cached;
     juce::Path swellPath, hitPath;
