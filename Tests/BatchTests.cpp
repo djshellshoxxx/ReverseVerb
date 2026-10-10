@@ -149,6 +149,21 @@ struct BatchTest : public juce::UnitTest
             expectEquals (BatchExporter::sanitiseFileName ("..."), juce::String ("export"));
         }
 
+        beginTest ("cancelling immediately after start still finishes (thread may never run)");
+        {
+            auto out = freshDir ("batch_out8");
+            BatchOptions o; o.outputFolder = out;
+            for (int i = 0; i < 20; ++i)
+            {
+                BatchExporter ex (p.makeBatchJob (paths, o));
+                ex.startThread();
+                ex.signalThreadShouldExit();                       // before the worker has necessarily started
+                ex.stopThread (20000);
+                expect (ex.isFinished(), "finished after immediate cancel (run " + juce::String (i) + ")");
+                expect (ex.getResult().cancelled || ex.getResult().ok == 3, "reports cancelled");
+            }
+        }
+
         beginTest ("cancel leaves only complete files");
         {
             auto out = freshDir ("batch_out7");
