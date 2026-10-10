@@ -1,4 +1,4 @@
-build/
+build*/
 *.user
 .vs/
 .DS_Store
