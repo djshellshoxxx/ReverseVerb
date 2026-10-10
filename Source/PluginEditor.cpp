@@ -9,8 +9,8 @@ using namespace RVColours;
 
 // ---------------- Editor ----------------
 
-ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension), meter (p)
+RVContent::RVContent (ReverseVerbProcessor& p)
+    : proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension), meter (p)
 {
     setLookAndFeel (&lnf);
     applyTooltipSetting();
@@ -128,9 +128,9 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     timerCallback();
 }
 
-ReverseVerbEditor::~ReverseVerbEditor() { setLookAndFeel (nullptr); }
+RVContent::~RVContent() { setLookAndFeel (nullptr); }
 
-ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, const juce::String& textName)
+RVContent::Knob& RVContent::makeKnob (const juce::String& id, const juce::String& textName)
 {
     auto k = std::make_unique<Knob>();
     auto& s = k->slider;
@@ -150,7 +150,7 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
     return *knobs.back();
 }
 
-void ReverseVerbEditor::timerCallback()
+void RVContent::timerCallback()
 {
     auto f = proc.getCurrentFile();
     fileLabel.setText (f.existsAsFile() ? f.getFileName() : "no sample loaded", juce::dontSendNotification);
@@ -166,7 +166,7 @@ void ReverseVerbEditor::timerCallback()
         if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col) { k->slider.setColour (juce::Slider::rotarySliderFillColourId, col); k->slider.repaint(); }
 }
 
-void ReverseVerbEditor::applyTooltipSetting()
+void RVContent::applyTooltipSetting()
 {
     if (tooltipsEnabled)
     {
@@ -179,11 +179,16 @@ void ReverseVerbEditor::applyTooltipSetting()
     }
 }
 
-void ReverseVerbEditor::showOptionsMenu()
+void RVContent::showOptionsMenu()
 {
     juce::PopupMenu menu;
     menu.addSectionHeader ("Interface");
     menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
+    menu.addSectionHeader ("Window size");
+    const float scales[] = { 0.75f, 1.0f, 1.25f, 1.5f };
+    for (int i = 0; i < 4; ++i)
+        menu.addItem (10 + i, juce::String (juce::roundToInt (scales[i] * 100.0f)) + " %", true,
+                      std::abs ((float) getWidth() / 1060.0f - scales[i]) < 0.02f);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&optionsButton),
                         [this] (int result)
                         {
@@ -192,10 +197,15 @@ void ReverseVerbEditor::showOptionsMenu()
                                 tooltipsEnabled = ! tooltipsEnabled;
                                 applyTooltipSetting();
                             }
+                            else if (result >= 10 && result <= 13 && onUiScale)
+                            {
+                                const float scales[] = { 0.75f, 1.0f, 1.25f, 1.5f };
+                                onUiScale (scales[result - 10]);
+                            }
                         });
 }
 
-void ReverseVerbEditor::paint (juce::Graphics& g)
+void RVContent::paint (juce::Graphics& g)
 {
     juce::ColourGradient grad (bg.brighter (0.07f), 0.0f, 0.0f, bg, 0.0f, (float) getHeight(), false);
     g.setGradientFill (grad);
@@ -219,7 +229,7 @@ void ReverseVerbEditor::paint (juce::Graphics& g)
     }
 }
 
-void ReverseVerbEditor::layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks)
+void RVContent::layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks)
 {
     const int kw = area.getWidth() / (int) ks.size();
     for (auto* k : ks)
@@ -230,7 +240,7 @@ void ReverseVerbEditor::layoutKnobs (juce::Rectangle<int> area, std::initializer
     }
 }
 
-void ReverseVerbEditor::resized()
+void RVContent::resized()
 {
     help.setBounds (getLocalBounds());
     groups.clear();
@@ -313,15 +323,40 @@ void ReverseVerbEditor::resized()
     layoutKnobs (group (rowB, rowB.getWidth(), "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
 }
 
-bool ReverseVerbEditor::isInterestedInFileDrag (const juce::StringArray& files)
+bool RVContent::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (auto& f : files)
         if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg")) return true;
     return false;
 }
 
-void ReverseVerbEditor::filesDropped (const juce::StringArray& files, int, int)
+void RVContent::filesDropped (const juce::StringArray& files, int, int)
 {
     for (auto& f : files)
         if (proc.loadSampleFile (juce::File (f), true)) return;
+}
+
+// ---------------- Resizable editor ----------------
+
+ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
+    : AudioProcessorEditor (&p), proc (p), content (p)
+{
+    content.onUiScale = [this] (float s) { setSize (juce::roundToInt ((float) kBaseW * s), juce::roundToInt ((float) kBaseH * s)); };
+    addAndMakeVisible (content);
+
+    constrainer.setSizeLimits (kMinW, kMinW * kBaseH / kBaseW, kMaxW, kMaxW * kBaseH / kBaseW);
+    constrainer.setFixedAspectRatio ((double) kBaseW / (double) kBaseH);
+    setConstrainer (&constrainer);
+    setResizable (true, true);
+
+    const int w = juce::jlimit (kMinW, kMaxW, proc.getUiWidth());
+    setSize (w, juce::roundToInt ((float) w * (float) kBaseH / (float) kBaseW));
+}
+
+void ReverseVerbEditor::resized()
+{
+    const float s = (float) getWidth() / (float) kBaseW;
+    content.setTransform (juce::AffineTransform::scale (s));
+    content.setBounds (0, 0, kBaseW, kBaseH);
+    proc.setUiSize (getWidth(), getHeight());
 }

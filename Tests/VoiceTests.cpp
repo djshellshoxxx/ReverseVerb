@@ -205,6 +205,16 @@ struct ProcessorFeatureTest : public juce::UnitTest
             if (rb != nullptr) expectEquals (rb->audio.getNumSamples(), ra->audio.getNumSamples());
         }
 
+        beginTest ("editor size is saved and restored with the project");
+        {
+            ReverseVerbProcessor a; a.setUiSize (1325, 900);
+            juce::MemoryBlock state; a.getStateInformation (state);
+            ReverseVerbProcessor b;
+            expectEquals (b.getUiWidth(), 1060);
+            b.setStateInformation (state.getData(), (int) state.getSize());
+            expectEquals (b.getUiWidth(), 1325); expectEquals (b.getUiHeight(), 900);
+        }
+
         beginTest ("keytrack: octave up shortens the sound by half; off is unchanged");
         {
             ReverseVerbProcessor p;

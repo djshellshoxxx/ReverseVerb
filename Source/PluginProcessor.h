@@ -45,6 +45,10 @@ public:
     int getSampleIndex() const { return currentIndex; }
     int getSampleCount() const { return folderFiles.size(); }
 
+    int getUiWidth() const { return uiW.load(); }
+    int getUiHeight() const { return uiH.load(); }
+    void setUiSize (int w, int h) { uiW = w; uiH = h; }
+
     void renderBlocking();                          // render now with current parameters (message / non-realtime thread)
     float takePeak (int ch) { return outputStage.takePeak (ch); }
     bool clipLatched() const { return outputStage.clipLatched(); }
@@ -105,6 +109,7 @@ private:
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
 
+    std::atomic<int> uiW { 1060 }, uiH { 720 };          // editor size, saved with the project
     VoiceBank voices;
     OutputStage outputStage;
     std::shared_ptr<const RenderedSample> lastBuffer;   // audio thread only: detects buffer swaps for the crossfade

@@ -302,6 +302,8 @@ void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = apvts.copyState();
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
     state.setProperty ("stateVersion", 2, nullptr);
+    state.setProperty ("uiW", uiW.load(), nullptr);
+    state.setProperty ("uiH", uiH.load(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -312,6 +314,8 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.isValid()) return;
         apvts.replaceState (state);
+        uiW = (int) state.getProperty ("uiW", 1060);
+        uiH = (int) state.getProperty ("uiH", 720);
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
         renderBlocking();               // project load: audio is ready before the first note / offline bounce

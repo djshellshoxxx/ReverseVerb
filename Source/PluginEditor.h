@@ -15,14 +15,16 @@
 #include "ui/HelpOverlay.h"
 #include "ui/LevelMeter.h"
 
-class ReverseVerbEditor : public juce::AudioProcessorEditor,
-                          public juce::DragAndDropContainer,
-                          public juce::FileDragAndDropTarget,
-                          private juce::Timer
+// The whole UI, laid out at a fixed 1060x720 "design size". ReverseVerbEditor scales it to the window.
+class RVContent : public juce::Component,
+                  public juce::DragAndDropContainer,
+                  public juce::FileDragAndDropTarget,
+                  private juce::Timer
 {
 public:
-    explicit ReverseVerbEditor (ReverseVerbProcessor&);
-    ~ReverseVerbEditor() override;
+    explicit RVContent (ReverseVerbProcessor&);
+    ~RVContent() override;
+    std::function<void (float)> onUiScale;      // set by the editor: Options menu asks for a window scale
     void paint (juce::Graphics&) override;
     void resized() override;
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -67,5 +69,19 @@ private:
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReverseVerbEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (RVContent)
+};
+
+// Resizable plugin window (75%-150%, fixed aspect). Size is remembered per project.
+class ReverseVerbEditor : public juce::AudioProcessorEditor
+{
+public:
+    static constexpr int kBaseW = 1060, kBaseH = 720, kMinW = 795, kMaxW = 1590;
+    explicit ReverseVerbEditor (ReverseVerbProcessor&);
+    void resized() override;
+
+private:
+    ReverseVerbProcessor& proc;
+    juce::ComponentBoundsConstrainer constrainer;
+    RVContent content;
 };
