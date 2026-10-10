@@ -91,10 +91,12 @@ std::shared_ptr<RenderedSample> renderSample (const RenderSettings& st, const So
                 for (int pass = 0; pass < passes; ++pass)
                     for (int ch = 0; ch < 2; ++ch) { juce::IIRFilter f; f.setCoefficients (c); f.reset(); f.processSamples (rev.getWritePointer (ch), revLen); }
             };
-            const float hp = st.basscut;
+            // cutoffs must stay below Nyquist or the biquads go unstable (low host sample rates, e.g. 22.05 kHz)
+            const float nyquistLimit = (float) (0.45 * sr);
+            const float hp = juce::jmin (st.basscut, nyquistLimit);
             if (hp > 21.0f) applyIIR (juce::IIRCoefficients::makeHighPass (sr, hp), 2);
             const float lp = st.tone;
-            if (lp < 19900.0f) applyIIR (juce::IIRCoefficients::makeLowPass (sr, lp), 1);
+            if (lp < 19900.0f && lp < nyquistLimit) applyIIR (juce::IIRCoefficients::makeLowPass (sr, lp), 1);
 
             // 6. shape, fade, normalize
             const float sh = st.shape;

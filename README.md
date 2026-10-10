@@ -1,6 +1,6 @@
 # ReverseVerb
 
-Reverse-reverb swell generator for snares, hats, claps (or any one-shot). Built for DnB / dubstep / breaks. VST3 + AU + Standalone, made with JUCE.
+Reverse-reverb swell generator for snares, hats, claps (or any one-shot). Built for DnB / dubstep / breaks. VST3 + CLAP + Standalone (AU on macOS), made with JUCE.
 
 Load a hit, dial in the reverb, and you instantly get a reversed-reverb swell that rises into the hit. Browse a whole folder of samples with `<` `>`, drag the result straight into your DAW, or export a WAV.
 
@@ -14,7 +14,14 @@ Load a hit, dial in the reverb, and you instantly get a reversed-reverb swell th
 - Sync total length to host BPM: 1 / 2 / 4 / 8 beats or 1 / 2 / 4 bars, with beat lines on the waveform
 - Hit on note (PDC) so the dry hit lands exactly on the MIDI note
 - Live readout of time, pitch and volume during playback
-- Drag-to-DAW, WAV export, random reverb, built-in help (`?`)
+- Drag-to-DAW, random reverb, built-in help (`?`)
+- Presets: factory + user presets, save/overwrite, dirty marker, A/B compare
+- Keytrack: play the swell chromatically (root note, with PDC-aware hit alignment)
+- Output gain, safety soft limiter and a peak meter with clip light
+- Undo / redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z) for knobs, waveform edits, randomize and presets
+- Batch export: render a whole folder of samples with the current settings (16/24/32-bit, sample rate, normalize, name pattern)
+- Resizable window (75-150%), size remembered per project
+- Click-free: parameter changes crossfade while a swell is playing; deterministic offline bounces
 
 ## Build (Windows)
 1. Clone or download, keep the path short (e.g. `C:\ReverseVerb`)
@@ -28,6 +35,16 @@ If PowerShell blocks scripts: `Set-ExecutionPolicy -Scope CurrentUser RemoteSign
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
+
+## Tests
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target ReverseVerbTests
+build/ReverseVerbTests_artefacts/Release/ReverseVerbTests          # golden render, fuzz, voices, presets, undo, batch
+RV_FUZZ_N=600 ...                                                  # longer parameter fuzz
+RV_UI_TESTS=1 RV_SNAPSHOT_DIR=/tmp/shots xvfb-run -a ...           # editor render tests (needs a display)
+```
+CI runs the tests on Windows and Linux, plus an AddressSanitizer/UBSan run and pluginval. The golden baseline is in `Tests/data/golden.txt` (regenerate deliberately with `RV_WRITE_GOLDEN=1`). Feature specs and the roadmap are in `docs/specs/`.
 
 ## FL Studio
 Options > Manage plugins > Find plugins. Add ReverseVerb to the Channel Rack as an instrument. Notes in the piano roll trigger it.

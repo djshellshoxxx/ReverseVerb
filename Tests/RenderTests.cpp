@@ -170,3 +170,28 @@ struct PlaybackTest : public juce::UnitTest
     }
 };
 static PlaybackTest playbackTest;
+
+// Regression: filter cutoffs above Nyquist at low host sample rates made the biquads blow up (found by the 600-iteration fuzz).
+struct LowRateFilterTest : public juce::UnitTest
+{
+    LowRateFilterTest() : juce::UnitTest ("Low sample rate filters", "ReverseVerb") {}
+
+    void runTest() override
+    {
+        beginTest ("tone / bass cut above Nyquist stay stable");
+        for (double sr : { 11025.0, 16000.0, 22050.0, 32000.0 })
+            for (float tone : { 8000.0f, 15000.0f, 20000.0f })
+                for (float bass : { 20.0f, 2000.0f })
+                {
+                    ReverseVerbProcessor p;
+                    p.prepareToPlay (sr, 256);
+                    p.loadSampleFile (makeBurst ("lowrate", sr, 0.1, 2));
+                    setReal (p, "tone", tone); setReal (p, "basscut", bass); setReal (p, "tail", 3.0f);
+                    auto s = statsOf (*settle (p));
+                    const juce::String tag = juce::String (sr) + " Hz tone " + juce::String (tone) + " bass " + juce::String (bass);
+                    expect (s.finite, tag + " finite");
+                    expect (s.peak <= 1.01, tag + " peak " + juce::String (s.peak));
+                }
+    }
+};
+static LowRateFilterTest lowRateFilterTest;
