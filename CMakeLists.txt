@@ -39,8 +39,11 @@ clap_juce_extensions_plugin(TARGET ReverseVerb
 juce_generate_juce_header(ReverseVerb)
 
 target_sources(ReverseVerb PRIVATE
+    Source/Params.cpp
+    Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/Voices.cpp
+    Source/dsp/RenderEngine.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
     JUCE_WEB_BROWSER=0
