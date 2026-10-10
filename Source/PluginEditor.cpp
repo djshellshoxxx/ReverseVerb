@@ -7,661 +7,10 @@
 
 using namespace RVColours;
 
-juce::Colour RVColours::swellColour (float toneHz, float bassCutHz)
-{
-    const float nt = juce::jlimit (0.0f, 1.0f, std::log (toneHz / 500.0f) / std::log (40.0f));      // 0 dark .. 1 bright
-    const float nb = juce::jlimit (0.0f, 1.0f, std::log (bassCutHz / 20.0f) / std::log (100.0f));   // 0 none .. 1 full cut
-    const float hue = 0.78f - 0.27f * nt;                                                          // violet -> cyan
-    const juce::Colour toneCol = juce::Colour::fromHSV (hue, 0.85f, 0.55f + 0.45f * nt, 1.0f);
-    const juce::Colour red = juce::Colour::fromHSV (0.02f, 0.95f, 1.0f, 1.0f);
-    return toneCol.interpolatedWith (red, nb * 0.9f);
-}
-
-// ---------------- Look and feel ----------------
-
-RVLookAndFeel::RVLookAndFeel()
-{
-    setColour (juce::Slider::textBoxTextColourId, text);
-    setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
-    setColour (juce::Slider::textBoxHighlightColourId, accent.withAlpha (0.4f));
-    setColour (juce::Label::textColourId, text);
-    setColour (juce::TextButton::textColourOffId, text);
-    setColour (juce::TextButton::textColourOnId, bg);
-    setColour (juce::ToggleButton::textColourId, textDim);
-    setColour (juce::PopupMenu::backgroundColourId, panel2);
-    setColour (juce::PopupMenu::textColourId, text);
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, accent.withAlpha (0.3f));
-    setColour (juce::PopupMenu::highlightedTextColourId, text);
-    setColour (juce::ComboBox::textColourId, text);
-    setColour (juce::ComboBox::arrowColourId, textDim);
-    setColour (juce::CaretComponent::caretColourId, accent);
-    setColour (juce::TextEditor::highlightColourId, accent.withAlpha (0.4f));
-    setColour (juce::TextEditor::textColourId, text);
-    setColour (juce::TextEditor::backgroundColourId, panel);
-    setColour (juce::TextEditor::outlineColourId, outline);
-    setColour (juce::TextEditor::focusedOutlineColourId, outline);
-    setColour (juce::ScrollBar::thumbColourId, outline.brighter (0.4f));
-}
-
-void RVLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float startAngle, float endAngle, juce::Slider& s)
-{
-    auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (5.0f);
-    const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) / 2.0f;
-    const float cx = bounds.getCentreX(), cy = bounds.getCentreY();
-    const float angle = startAngle + pos * (endAngle - startAngle);
-    const float arcR = radius - 3.0f;
-    const bool bipolar = s.getMinimum() < 0.0;
-    const juce::Colour col = s.findColour (juce::Slider::rotarySliderFillColourId, true);
-
-    juce::Path track;
-    track.addCentredArc (cx, cy, arcR, arcR, 0.0f, startAngle, endAngle, true);
-    g.setColour (outline);
-    g.strokePath (track, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    juce::Path value;
-    const float from = bipolar ? (startAngle + endAngle) * 0.5f : startAngle;
-    value.addCentredArc (cx, cy, arcR, arcR, 0.0f, juce::jmin (from, angle), juce::jmax (from, angle), true);
-    g.setColour (col.withAlpha (0.35f));
-    g.strokePath (value, juce::PathStrokeType (8.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour (col);
-    g.strokePath (value, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    const float knobR = arcR - 9.0f;
-    juce::ColourGradient grad (panel2.brighter (0.3f), cx - knobR, cy - knobR, panel.darker (0.5f), cx + knobR, cy + knobR, true);
-    g.setGradientFill (grad);
-    g.fillEllipse (cx - knobR, cy - knobR, knobR * 2.0f, knobR * 2.0f);
-    g.setColour (outline.brighter (0.25f));
-    g.drawEllipse (cx - knobR, cy - knobR, knobR * 2.0f, knobR * 2.0f, 1.0f);
-
-    juce::Path pointer;
-    pointer.addRoundedRectangle (-1.75f, -knobR + 4.0f, 3.5f, knobR * 0.55f, 1.75f);
-    pointer.applyTransform (juce::AffineTransform::rotation (angle).translated (cx, cy));
-    g.setColour (text);
-    g.fillPath (pointer);
-}
-
-void RVLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1.0f);
-    const bool on = b.getToggleState();
-    g.setColour (on ? accent : (down ? panel2.brighter (0.3f) : (over ? panel2.brighter (0.15f) : panel2)));
-    g.fillRoundedRectangle (r, 7.0f);
-    g.setColour (on ? accent.brighter (0.2f) : outline.brighter (over ? 0.5f : 0.15f));
-    g.drawRoundedRectangle (r, 7.0f, 1.0f);
-}
-
-juce::Font RVLookAndFeel::getTextButtonFont (juce::TextButton&, int height)
-{
-    return juce::Font (juce::FontOptions (juce::jmin (12.5f, (float) height * 0.55f), juce::Font::bold));
-}
-
-void RVLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b, bool over, bool)
-{
-    auto r = b.getLocalBounds().toFloat();
-    auto box = r.removeFromLeft (18.0f).withSizeKeepingCentre (16.0f, 16.0f);
-    g.setColour (b.getToggleState() ? accent : (over ? panel2.brighter (0.3f) : panel2));
-    g.fillRoundedRectangle (box, 4.0f);
-    g.setColour (outline.brighter (0.3f));
-    g.drawRoundedRectangle (box, 4.0f, 1.0f);
-    if (b.getToggleState())
-    {
-        juce::Path tick;
-        tick.startNewSubPath (box.getX() + 4.0f, box.getCentreY());
-        tick.lineTo (box.getX() + 7.0f, box.getBottom() - 4.5f);
-        tick.lineTo (box.getRight() - 3.5f, box.getY() + 4.0f);
-        g.setColour (bg);
-        g.strokePath (tick, juce::PathStrokeType (2.0f));
-    }
-    g.setColour (b.getToggleState() ? text : textDim);
-    g.setFont (juce::Font (juce::FontOptions (12.0f)));
-    g.drawText (b.getButtonText(), r.withTrimmedLeft (6.0f).toNearestInt(), juce::Justification::centredLeft);
-}
-
-juce::Label* RVLookAndFeel::createSliderTextBox (juce::Slider& s)
-{
-    auto* l = LookAndFeel_V4::createSliderTextBox (s);
-    l->setFont (juce::Font (juce::FontOptions (11.0f)));
-    l->setColour (juce::Label::textColourId, textDim);
-    l->setJustificationType (juce::Justification::centred);
-    return l;
-}
-
-void RVLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box)
-{
-    auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (1.0f);
-    g.setColour (box.isMouseOver (true) ? panel2.brighter (0.15f) : panel2);
-    g.fillRoundedRectangle (r, 7.0f);
-    g.setColour (outline.brighter (0.15f));
-    g.drawRoundedRectangle (r, 7.0f, 1.0f);
-    juce::Path arrow;
-    const float ax = (float) w - 14.0f, ay = (float) h * 0.5f;
-    arrow.addTriangle (ax - 4.0f, ay - 2.0f, ax + 4.0f, ay - 2.0f, ax, ay + 3.0f);
-    g.setColour (textDim);
-    g.fillPath (arrow);
-}
-
-void RVLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
-{
-    label.setBounds (8, 1, box.getWidth() - 26, box.getHeight() - 2);
-    label.setFont (getComboBoxFont (box));
-}
-
-// ---------------- Diffusion shape (Reeverb-2 style wireframe) ----------------
-
-void DiffusionShape::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat();
-    const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
-    juce::ColourGradient bgGrad (col.withAlpha (0.16f), r.getCentreX(), r.getCentreY(), panel, r.getX(), r.getY(), true);
-    g.setGradientFill (bgGrad);
-    g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (outline);
-    g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
-
-    const float diff = proc.param (IDs::diff), size = proc.param (IDs::size), decay = proc.param (IDs::decay), sep = proc.param (IDs::sep), er = proc.param (IDs::er);
-    const int sides = 3 + juce::roundToInt (diff * 6.0f);
-    const float cx = r.getCentreX(), cy = r.getCentreY();
-    const float radius = juce::jmin (r.getWidth(), r.getHeight()) * (0.18f + 0.17f * size);
-    const float halfH = juce::jmin (r.getWidth(), r.getHeight()) * (0.12f + 0.24f * decay);
-    const float tilt = 0.55f;
-
-    auto project = [&] (float x, float y, float z, float scale)
-    {
-        const float xr = x * std::cos (angle) - z * std::sin (angle);
-        const float zr = x * std::sin (angle) + z * std::cos (angle);
-        const float yr = y * std::cos (tilt) - zr * std::sin (tilt);
-        const float depth = 1.0f + zr / (radius * 6.0f);
-        return juce::Point<float> (cx + xr * scale * depth, cy + yr * scale * depth);
-    };
-    auto drawPrism = [&] (float scale, float alpha, float thick, float xOff)
-    {
-        std::vector<juce::Point<float>> top, bot;
-        for (int i = 0; i < sides; ++i)
-        {
-            const float a = juce::MathConstants<float>::twoPi * (float) i / (float) sides;
-            top.push_back (project (radius * std::cos (a) + xOff, -halfH, radius * std::sin (a), scale));
-            bot.push_back (project (radius * std::cos (a) + xOff,  halfH, radius * std::sin (a), scale));
-        }
-        juce::Path p;
-        for (int i = 0; i < sides; ++i)
-        {
-            const int j = (i + 1) % sides;
-            p.startNewSubPath (top[(size_t) i]); p.lineTo (top[(size_t) j]);
-            p.startNewSubPath (bot[(size_t) i]); p.lineTo (bot[(size_t) j]);
-            p.startNewSubPath (top[(size_t) i]); p.lineTo (bot[(size_t) i]);
-        }
-        g.setColour (col.withAlpha (alpha * 0.35f));
-        g.strokePath (p, juce::PathStrokeType (thick + 2.5f));
-        g.setColour (col.brighter (0.4f).withAlpha (alpha));
-        g.strokePath (p, juce::PathStrokeType (thick));
-    };
-    drawPrism (1.0f, 0.95f, 1.4f, 0.0f);
-    if (sep > 0.02f) drawPrism (0.7f, 0.25f + 0.5f * sep, 1.0f, radius * sep * 0.8f);
-
-    // early reflection sparks
-    if (er > 0.02f)
-    {
-        juce::Random rnd (42);
-        g.setColour (col.brighter (0.6f).withAlpha (er * 0.8f));
-        for (int i = 0; i < 8; ++i)
-        {
-            const float a = angle * 0.7f + (float) i * 0.8f;
-            const float rr = radius * (1.15f + 0.35f * rnd.nextFloat());
-            auto pt = project (rr * std::cos (a), (rnd.nextFloat() - 0.5f) * halfH * 2.0f, rr * std::sin (a), 1.0f);
-            g.fillEllipse (pt.x - 1.5f, pt.y - 1.5f, 3.0f, 3.0f);
-        }
-    }
-
-    g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
-    g.setColour (textDim);
-    g.drawText ("SPACE", r.reduced (10.0f, 8.0f).toNearestInt(), juce::Justification::bottomLeft);
-    g.drawText (juce::String (sides) + " faces", r.reduced (10.0f, 8.0f).toNearestInt(), juce::Justification::bottomRight);
-}
-
-// ---------------- Waveform ----------------
-
-WaveformDisplay::WaveformDisplay (ReverseVerbProcessor& p) : proc (p)
-{
-    startTimerHz (30);
-}
-
-juce::Rectangle<float> WaveformDisplay::plot() const
-{
-    return getLocalBounds().toFloat().reduced (10.0f, 8.0f).withTrimmedBottom (20.0f).withTrimmedTop (14.0f);
-}
-
-float WaveformDisplay::volY (float level) const
-{
-    auto p = plot();
-    return p.getBottom() - level * p.getHeight();
-}
-
-void WaveformDisplay::timerCallback()
-{
-    auto r = proc.getRendered();
-    bool dirty = false;
-    if (r != cached) { cached = r; rebuild(); staticDirty = true; dirty = true; }
-    const int ph = proc.getPlayheadPosition();
-    if (ph != lastPlayhead) { lastPlayhead = ph; dirty = true; }
-    const float tone = proc.param (IDs::tone), bass = proc.param (IDs::basscut);
-    const float v0 = proc.param (IDs::volStart), v1 = proc.param (IDs::volEnd), vt = proc.param (IDs::volTension);
-    if (tone != lastTone || bass != lastBass) staticDirty = true;
-    if (tone != lastTone || bass != lastBass || v0 != lastV0 || v1 != lastV1 || vt != lastVT) { lastTone = tone; lastBass = bass; lastV0 = v0; lastV1 = v1; lastVT = vt; dirty = true; }
-    if (dirty) repaint();
-}
-
-void WaveformDisplay::rebuild()
-{
-    swellPath.clear(); hitPath.clear();
-    total = 0; hitIndex = -1;
-    if (cached == nullptr) return;
-    total = cached->audio.getNumSamples();
-    hitIndex = cached->hitIndex;
-    auto p = plot();
-    if (total <= 0 || p.getWidth() <= 2.0f) return;
-
-    auto build = [&] (juce::Path& path, int from, int to)
-    {
-        if (to <= from) return;
-        const float x0 = p.getX() + p.getWidth() * (float) from / (float) total;
-        const float x1 = p.getX() + p.getWidth() * (float) to / (float) total;
-        const int cols = juce::jmax (1, (int) (x1 - x0));
-        const float mid = p.getCentreY();
-        std::vector<float> mins ((size_t) cols, 0.0f), maxs ((size_t) cols, 0.0f);
-        const float* d = cached->audio.getReadPointer (0);
-        for (int c = 0; c < cols; ++c)
-        {
-            const int a = from + (int) ((juce::int64) (to - from) * c / cols);
-            const int b = juce::jmax (a + 1, from + (int) ((juce::int64) (to - from) * (c + 1) / cols));
-            float mn = 0.0f, mx = 0.0f;
-            for (int i = a; i < b && i < total; ++i) { mn = juce::jmin (mn, d[i]); mx = juce::jmax (mx, d[i]); }
-            mins[(size_t) c] = mn; maxs[(size_t) c] = mx;
-        }
-        const float amp = p.getHeight() * 0.47f;
-        path.startNewSubPath (x0, mid);
-        for (int c = 0; c < cols; ++c) path.lineTo (x0 + (float) c, mid - maxs[(size_t) c] * amp);
-        for (int c = cols - 1; c >= 0; --c) path.lineTo (x0 + (float) c, mid - mins[(size_t) c] * amp);
-        path.closeSubPath();
-    };
-    const int split = hitIndex >= 0 ? hitIndex : total;
-    build (swellPath, 0, split);
-    build (hitPath, split, total);
-}
-
-void WaveformDisplay::renderStatic (float scale)
-{
-    const int w = juce::jmax (1, juce::roundToInt ((float) getWidth() * scale)), h = juce::jmax (1, juce::roundToInt ((float) getHeight() * scale));
-    staticImage = juce::Image (juce::Image::ARGB, w, h, true);
-    juce::Graphics g (staticImage);
-    g.addTransform (juce::AffineTransform::scale ((float) w / (float) juce::jmax (1, getWidth()), (float) h / (float) juce::jmax (1, getHeight())));
-    auto r = getLocalBounds().toFloat();
-    auto p = plot();
-    const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
-
-    juce::ColourGradient bgGrad (panel.brighter (0.06f), 0, r.getY(), panel.darker (0.3f), 0, r.getBottom(), false);
-    g.setGradientFill (bgGrad);
-    g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (col.withAlpha (0.07f));
-    g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (outline);
-    g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
-
-    g.setColour (outline.withAlpha (0.35f));
-    for (int i = 1; i < 4; ++i) g.drawHorizontalLine ((int) (p.getY() + p.getHeight() * i / 4.0f), p.getX(), p.getRight());
-    g.setColour (outline.withAlpha (0.8f));
-    g.drawHorizontalLine ((int) p.getCentreY(), p.getX(), p.getRight());
-
-    auto drawWave = [&] (const juce::Path& path, juce::Colour c)
-    {
-        if (path.isEmpty()) return;
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillPath (path, juce::AffineTransform::translation (3.0f, 4.0f));
-        juce::ColourGradient body (c.brighter (0.5f), 0, p.getY(), c.darker (0.7f), 0, p.getBottom(), false);
-        body.addColour (0.5, c);
-        g.setGradientFill (body);
-        g.fillPath (path);
-        g.setColour (c.withAlpha (0.28f));
-        g.strokePath (path, juce::PathStrokeType (3.0f));
-        g.setColour (juce::Colours::white.withAlpha (0.35f));
-        g.strokePath (path, juce::PathStrokeType (0.8f));
-    };
-    drawWave (swellPath, col);
-    drawWave (hitPath, hitCol);
-}
-
-void WaveformDisplay::paint (juce::Graphics& g)
-{
-    auto p = plot();
-    const juce::Colour col = swellColour (proc.param (IDs::tone), proc.param (IDs::basscut));
-
-    // static layer (background, grid, waveform) is cached as an image and only rebuilt when it changes
-    const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
-    const int wantW = juce::roundToInt ((float) getWidth() * scale), wantH = juce::roundToInt ((float) getHeight() * scale);
-    if (staticDirty || staticImage.getWidth() != wantW || staticImage.getHeight() != wantH) { renderStatic (scale); staticDirty = false; }
-    g.drawImage (staticImage, getLocalBounds().toFloat());
-
-    if (total <= 0 || cached == nullptr)
-    {
-        g.setColour (textDim);
-        g.setFont (juce::Font (juce::FontOptions (15.0f)));
-        g.drawText ("Drop a snare / hat / clap here, or hit LOAD", getLocalBounds(), juce::Justification::centred);
-        return;
-    }
-
-    const double sr = cached->sampleRate;
-    const double lenSec = total / sr;
-
-    // beat lines (sync)
-    if (cached->beats > 0)
-    {
-        const double beatSec = cached->fullLengthSec / cached->beats;
-        const double span = cached->trimEndSec - cached->trimStartSec;
-        for (int b = 0; b <= cached->beats; ++b)
-        {
-            const double t = b * beatSec - cached->trimStartSec;
-            if (t < -0.0005 || t > span + 0.0005) continue;
-            const float x = p.getX() + p.getWidth() * (float) (t / span);
-            const bool bar = (b % cached->beatsPerBar) == 0;
-            g.setColour (bar ? juce::Colour (0xffff4d4d).withAlpha (0.9f) : juce::Colour (0xffff4d4d).withAlpha (0.45f));
-            g.drawLine (x, p.getY(), x, p.getBottom(), bar ? 1.5f : 1.0f);
-        }
-    }
-
-    if (hitIndex >= 0)
-    {
-        const float sx = p.getX() + p.getWidth() * (float) hitIndex / (float) total;
-        g.setColour (text.withAlpha (0.5f));
-        const float dash[] = { 3.0f, 3.0f };
-        juce::Path l; l.startNewSubPath (sx, p.getY()); l.lineTo (sx, p.getBottom());
-        juce::Path dl; juce::PathStrokeType (1.0f).createDashedStroke (dl, l, dash, 2);
-        g.fillPath (dl);
-    }
-
-    // volume envelope line
-    const float v0 = proc.param (IDs::volStart), v1 = proc.param (IDs::volEnd), vt = proc.param (IDs::volTension);
-    juce::Path vol;
-    const int steps = 64;
-    for (int i = 0; i <= steps; ++i)
-    {
-        const float x = (float) i / (float) steps;
-        const float lvl = v0 + (v1 - v0) * tensionCurve (x, vt);
-        const juce::Point<float> pt (p.getX() + p.getWidth() * x, volY (lvl));
-        if (i == 0) vol.startNewSubPath (pt); else vol.lineTo (pt);
-    }
-    g.setColour (juce::Colours::white.withAlpha (0.25f));
-    g.strokePath (vol, juce::PathStrokeType (3.0f));
-    g.setColour (juce::Colours::white.withAlpha (0.9f));
-    g.strokePath (vol, juce::PathStrokeType (1.2f));
-    auto handle = [&] (juce::Point<float> c, bool hot, bool square)
-    {
-        const float s = hot ? 6.0f : 4.5f;
-        g.setColour (hot ? accent : juce::Colours::white);
-        if (square) g.fillRect (c.x - s, c.y - s, s * 2.0f, s * 2.0f); else g.fillEllipse (c.x - s, c.y - s, s * 2.0f, s * 2.0f);
-        g.setColour (bg);
-        if (square) g.drawRect (c.x - s, c.y - s, s * 2.0f, s * 2.0f, 1.0f); else g.drawEllipse (c.x - s, c.y - s, s * 2.0f, s * 2.0f, 1.0f);
-    };
-    handle ({ p.getX(), volY (v0) }, hover == Drag::volStart || drag == Drag::volStart, false);
-    handle ({ p.getRight(), volY (v1) }, hover == Drag::volEnd || drag == Drag::volEnd, false);
-    handle ({ p.getCentreX(), volY (v0 + (v1 - v0) * tensionCurve (0.5f, vt)) }, hover == Drag::volTension || drag == Drag::volTension, true);
-
-    // trim handles
-    g.setColour (hover == Drag::trimStart || drag == Drag::trimStart ? accent : textDim);
-    juce::Path ts; ts.addTriangle (p.getX(), p.getY() - 12.0f, p.getX() + 10.0f, p.getY() - 12.0f, p.getX(), p.getY() - 2.0f); g.fillPath (ts);
-    g.setColour (hover == Drag::trimEnd || drag == Drag::trimEnd ? accent : textDim);
-    juce::Path te; te.addTriangle (p.getRight(), p.getY() - 12.0f, p.getRight() - 10.0f, p.getY() - 12.0f, p.getRight(), p.getY() - 2.0f); g.fillPath (te);
-
-    // playhead
-    if (lastPlayhead >= 0)
-    {
-        const float px = p.getX() + p.getWidth() * (float) juce::jmin (lastPlayhead, total) / (float) total;
-        g.setColour (juce::Colours::white.withAlpha (0.25f));
-        g.fillRect (p.getX(), p.getY(), px - p.getX(), p.getHeight());
-        g.setColour (juce::Colours::white);
-        g.drawLine (px, p.getY(), px, p.getBottom(), 1.5f);
-    }
-
-    // readouts
-    g.setFont (juce::Font (juce::FontOptions (11.0f)));
-    const int by = getHeight() - 18, bh = 14;
-    juce::String left, mid, right;
-    if (lastPlayhead >= 0)
-    {
-        const int e = juce::jmin ((int) cached->gainLin.size() - 1, lastPlayhead / RenderedSample::envStep);
-        const float gl = e >= 0 ? cached->gainLin[(size_t) e] : 1.0f;
-        const float st = e >= 0 ? cached->pitchSemi[(size_t) e] : 0.0f;
-        left = juce::String (lastPlayhead / sr, 3) + " s";
-        mid = "PITCH " + juce::String (st >= 0 ? "+" : "") + juce::String (st, 1) + " st    VOL " + (gl > 0.0001f ? juce::String (20.0f * std::log10 (gl), 1) + " dB" : "-inf dB");
-    }
-    else
-    {
-        left = "LEN " + juce::String (lenSec, 3) + " s";
-        if (std::abs (cached->trimEndSec - cached->trimStartSec - cached->fullLengthSec) > 0.001)
-            left += "   (trim " + juce::String (cached->trimStartSec, 2) + " - " + juce::String (cached->trimEndSec, 2) + " of " + juce::String (cached->fullLengthSec, 2) + " s)";
-        mid = hitIndex >= 0 ? "HIT @ " + juce::String (hitIndex / sr, 3) + " s" : "HIT TRIMMED OUT";
-    }
-    right = juce::String (proc.getHostBpm(), 1) + " BPM";
-    if (cached->beats > 0) right += "   " + juce::String (cached->beats) + " beats";
-    g.setColour (col.brighter (0.5f));
-    g.drawText (left, 12, by, getWidth() / 2, bh, juce::Justification::centredLeft);
-    g.setColour (text);
-    g.drawText (mid, 0, by, getWidth(), bh, juce::Justification::centred);
-    g.setColour (textDim);
-    g.drawText (right, getWidth() / 2, by, getWidth() / 2 - 12, bh, juce::Justification::centredRight);
-    g.setFont (juce::Font (juce::FontOptions (9.5f)));
-    g.setColour (textDim.withAlpha (0.7f));
-    g.drawText ("click = play    drag = trim    dots = volume", 0, 2, getWidth(), 12, juce::Justification::centred);
-}
-
-void WaveformDisplay::mouseMove (const juce::MouseEvent& e)
-{
-    Drag h = Drag::none;
-    if (total > 0)
-    {
-        auto p = plot();
-        const float v0 = proc.param (IDs::volStart), v1 = proc.param (IDs::volEnd), vt = proc.param (IDs::volTension);
-        const juce::Point<float> ps (p.getX(), volY (v0)), pe (p.getRight(), volY (v1)), pm (p.getCentreX(), volY (v0 + (v1 - v0) * tensionCurve (0.5f, vt)));
-        if (e.position.getDistanceFrom (ps) < 10.0f) h = Drag::volStart;
-        else if (e.position.getDistanceFrom (pe) < 10.0f) h = Drag::volEnd;
-        else if (e.position.getDistanceFrom (pm) < 10.0f) h = Drag::volTension;
-        else if (e.x < p.getX() + 14.0f) h = Drag::trimStart;
-        else h = Drag::trimEnd;
-    }
-    if (h != hover) { hover = h; repaint(); }
-    setMouseCursor (h == Drag::volStart || h == Drag::volEnd || h == Drag::volTension ? juce::MouseCursor::UpDownResizeCursor
-                    : (h == Drag::none ? juce::MouseCursor::NormalCursor : juce::MouseCursor::LeftRightResizeCursor));
-}
-
-void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
-{
-    mouseMove (e);
-    drag = hover;
-    moved = false;
-    downPos = e.position;
-    switch (drag)
-    {
-        case Drag::trimEnd:    downA = proc.param (IDs::trimEnd); downB = proc.param (IDs::trimStart); break;
-        case Drag::trimStart:  downA = proc.param (IDs::trimStart); downB = proc.param (IDs::trimEnd); break;
-        case Drag::volStart:   downA = proc.param (IDs::volStart); break;
-        case Drag::volEnd:     downA = proc.param (IDs::volEnd); break;
-        case Drag::volTension: downA = proc.param (IDs::volTension); break;
-        default: break;
-    }
-    downSpan = juce::jmax (0.01f, std::abs (downB - downA));
-    if (e.mods.isRightButtonDown() || e.getNumberOfClicks() > 1)
-    {
-        if (drag == Drag::volStart) proc.setParam (IDs::volStart, 1.0f);
-        if (drag == Drag::volEnd) proc.setParam (IDs::volEnd, 1.0f);
-        if (drag == Drag::volTension) proc.setParam (IDs::volTension, 0.0f);
-        drag = Drag::none;
-    }
-}
-
-void WaveformDisplay::mouseDrag (const juce::MouseEvent& e)
-{
-    const float dx = e.position.x - downPos.x, dy = e.position.y - downPos.y;
-    if (std::abs (dx) > 2.0f || std::abs (dy) > 2.0f) moved = true;
-    if (! moved) return;
-    auto p = plot();
-    const float nx = dx / p.getWidth(), ny = -dy / p.getHeight();
-    switch (drag)
-    {
-        case Drag::trimEnd:    proc.setParam (IDs::trimEnd,   juce::jlimit (downB + 0.02f, 1.0f, downA - nx * downSpan)); break;   // drag right = shorter
-        case Drag::trimStart:  proc.setParam (IDs::trimStart, juce::jlimit (0.0f, downB - 0.02f, downA + nx * downSpan)); break;
-        case Drag::volStart:   proc.setParam (IDs::volStart, juce::jlimit (0.0f, 1.0f, downA + ny)); break;
-        case Drag::volEnd:     proc.setParam (IDs::volEnd,   juce::jlimit (0.0f, 1.0f, downA + ny)); break;
-        case Drag::volTension: proc.setParam (IDs::volTension, juce::jlimit (-1.0f, 1.0f, downA + ny * 3.0f * (proc.param (IDs::volEnd) >= proc.param (IDs::volStart) ? -1.0f : 1.0f))); break;
-        default: break;
-    }
-}
-
-void WaveformDisplay::mouseUp (const juce::MouseEvent&)
-{
-    if (! moved && drag != Drag::none && drag != Drag::volStart && drag != Drag::volEnd && drag != Drag::volTension)
-        proc.triggerPreview();
-    drag = Drag::none;
-    repaint();
-}
-
-// ---------------- Tension box ----------------
-
-void TensionBox::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat().reduced (1.0f);
-    g.setColour (panel);
-    g.fillRoundedRectangle (r, 6.0f);
-    g.setColour (outline);
-    g.drawRoundedRectangle (r, 6.0f, 1.0f);
-    auto in = r.reduced (6.0f);
-    g.setColour (outline.withAlpha (0.5f));
-    g.drawLine (in.getX(), in.getCentreY(), in.getRight(), in.getCentreY(), 0.5f);
-    g.drawLine (in.getCentreX(), in.getY(), in.getCentreX(), in.getBottom(), 0.5f);
-    const float t = proc.param (paramId);
-    juce::Path curve;
-    for (int i = 0; i <= 40; ++i)
-    {
-        const float x = (float) i / 40.0f;
-        const juce::Point<float> pt (in.getX() + in.getWidth() * x, in.getBottom() - in.getHeight() * tensionCurve (x, t));
-        if (i == 0) curve.startNewSubPath (pt); else curve.lineTo (pt);
-    }
-    g.setColour (accent.withAlpha (0.3f));
-    g.strokePath (curve, juce::PathStrokeType (4.0f));
-    g.setColour (accent);
-    g.strokePath (curve, juce::PathStrokeType (1.6f));
-    g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
-    g.setColour (textDim);
-    g.drawText ("CURVE", getLocalBounds().withTrimmedTop (getHeight() - 13), juce::Justification::centred);
-}
-
-// ---------------- Drag out ----------------
-
-void DragOutPad::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat().reduced (1.0f);
-    g.setColour (over ? accent.withAlpha (0.18f) : panel2);
-    g.fillRoundedRectangle (r, 7.0f);
-    g.setColour (over ? accent : outline.brighter (0.2f));
-    const float dash[] = { 4.0f, 3.0f };
-    juce::Path p; p.addRoundedRectangle (r, 7.0f);
-    juce::Path dashed;
-    juce::PathStrokeType (1.2f).createDashedStroke (dashed, p, dash, 2);
-    g.fillPath (dashed);
-    g.setColour (over ? text : textDim);
-    g.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
-    g.drawText ("DRAG TO DAW", getLocalBounds(), juce::Justification::centred);
-}
-
-void DragOutPad::mouseDrag (const juce::MouseEvent& e)
-{
-    if (dragging || ! e.mouseWasDraggedSinceMouseDown()) return;
-    auto src = proc.getCurrentFile();
-    if (! src.existsAsFile()) return;
-    dragging = true;
-    auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                   .getChildFile ("ReverseVerb").getChildFile (src.getFileNameWithoutExtension() + "_reverse.wav");
-    tmp.getParentDirectory().createDirectory();
-    if (proc.exportWav (tmp))
-        if (auto* dc = juce::DragAndDropContainer::findParentDragContainerFor (this))
-        {
-            dc->performExternalDragDropOfFiles ({ tmp.getFullPathName() }, false, this, [this] { dragging = false; });
-            return;
-        }
-    dragging = false;
-}
-
-// ---------------- Help ----------------
-
-static const char* kHelpText = R"(REVERSE VERB - what everything does
-
-WORKFLOW
-  LOAD (or drop a file on the window) picks a hit. < > steps through every sample in that folder and auto-plays it with your current settings.
-  Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.
-  EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
-  Hit on note (PDC): reports the swell length as latency so the DRY HIT lands exactly on the note and the swell starts early. Turn off if you'd rather place notes early yourself.
-  RESET EDITS clears trim, pitch and volume envelope. RANDOM rolls new reverb settings.
-
-WAVEFORM
-  Colour follows the COLOR knob (violet = dark, cyan = bright) and turns red as BASS CUT rises.
-  Drag anywhere to trim: drag right = shorter, drag left = longer. Drag near the left edge to trim the start. Trim the hit off entirely for a pure swell.
-  Volume line: drag the left / right dots up or down (bottom = -inf dB, top = 0 dB). Drag the middle square to bend the curve (tension). Double-click a dot to reset it.
-  Red lines are beats (bright = bar) when SYNC is on. Dashed line = where the dry hit begins.
-  Bottom row shows length, hit position, BPM, and live time / pitch / volume while playing.
-
-REVERB
-  SIZE: room dimensions.  DECAY: how long the tail rings.  DAMP: high-frequency absorption.
-  DIFFUSION: smearing of echoes (smooth vs grainy). The SPACE panel shows more faces as diffusion rises.
-  EARLY REF: level of first reflections.  SEPARATION: how different left and right are.  WIDTH: stereo spread of the mix.
-  DELAY: silence inserted between the end of the swell and the hit.
-
-SWELL
-  LENGTH: seconds of reverb tail (disabled when SYNC is on).  SHAPE: bends the swell envelope (negative = fuller early, positive = late rush).
-  COLOR: low-pass filter on the swell.  BASS CUT: high-pass filter on the swell, keeps sub out of your break.
-
-SYNC
-  SYNC locks the total length (swell + hit) to the host tempo. Pick 1/2/4/8 beats or 1/2/4 bars. Re-renders automatically when BPM changes.
-
-PITCH
-  PITCH sweeps the pitch from 0 at the start to the knob amount at the end. Range chooses 1, 2 or 4 octaves. CURVE box: drag up/down to change how fast the sweep happens.
-
-MIX
-  HIT: level of the dry hit.  SWELL: level of the reversed reverb.
-)";
-
-HelpOverlay::HelpOverlay()
-{
-    body.setMultiLine (true);
-    body.setReadOnly (true);
-    body.setScrollbarsShown (true);
-    body.setCaretVisible (false);
-    body.setFont (juce::Font (juce::FontOptions (13.0f)));
-    body.setText (kHelpText);
-    addAndMakeVisible (body);
-    addAndMakeVisible (closeButton);
-    closeButton.onClick = [this] { setVisible (false); };
-}
-
-void HelpOverlay::paint (juce::Graphics& g)
-{
-    g.fillAll (bg.withAlpha (0.88f));
-    auto r = getLocalBounds().reduced (40).toFloat();
-    g.setColour (panel);
-    g.fillRoundedRectangle (r, 12.0f);
-    g.setColour (outline);
-    g.drawRoundedRectangle (r, 12.0f, 1.0f);
-}
-
-void HelpOverlay::resized()
-{
-    auto r = getLocalBounds().reduced (52);
-    closeButton.setBounds (r.removeFromBottom (30).withSizeKeepingCentre (100, 30));
-    r.removeFromBottom (10);
-    body.setBounds (r);
-}
-
 // ---------------- Editor ----------------
 
-ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension)
+RVContent::RVContent (ReverseVerbProcessor& p)
+    : proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension), meter (p), presetBar (p)
 {
     setLookAndFeel (&lnf);
     applyTooltipSetting();
@@ -672,7 +21,6 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     subtitle.setText ("reverse reverb swell for hits", juce::dontSendNotification);
     subtitle.setFont (juce::Font (juce::FontOptions (12.0f)));
     subtitle.setColour (juce::Label::textColourId, textDim);
-    addAndMakeVisible (subtitle);
 
     fileLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
     fileLabel.setJustificationType (juce::Justification::centred);
@@ -684,9 +32,12 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     countLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (countLabel);
 
-    for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &optionsButton, &helpButton })
+    for (auto* b : { &undoButton, &redoButton, &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &optionsButton, &helpButton })
         addAndMakeVisible (b);
-    for (auto* t : { &alignToggle, &syncToggle }) addAndMakeVisible (t);
+    for (auto* t : { &alignToggle, &syncToggle, &keytrackToggle, &limiterToggle }) addAndMakeVisible (t);
+    addAndMakeVisible (meter);
+    addAndMakeVisible (presetBar);
+    addAndMakeVisible (rootCombo);
     addAndMakeVisible (waveform);
     addAndMakeVisible (shape);
     addAndMakeVisible (dragPad);
@@ -698,6 +49,10 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     addAndMakeVisible (rangeCombo);
     syncComboAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::syncLen, syncCombo);
     rangeComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::pitchRange, rangeCombo);
+    for (int n = 0; n < 128; ++n) rootCombo.addItem (juce::MidiMessage::getMidiNoteName (n, true, true, 4), n + 1);
+    rootComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::rootNote, rootCombo);
+    keytrackAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::keytrack, keytrackToggle);
+    limiterAtt   = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::limiter, limiterToggle);
     alignAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
     syncAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync, syncToggle);
 
@@ -707,6 +62,10 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     rangeLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (rangeLabel);
 
+    undoButton.onClick = [this] { proc.getUndo().undo(); };
+    redoButton.onClick = [this] { proc.getUndo().redo(); };
+    undoButton.setTooltip ("Undo the last edit (Ctrl/Cmd+Z). Host automation is not part of undo.");
+    redoButton.setTooltip ("Redo (Ctrl/Cmd+Shift+Z or Ctrl+Y).");
     prevButton.onClick   = [this] { proc.prevSample(); };
     nextButton.onClick   = [this] { proc.nextSample(); };
     playButton.onClick   = [this] { proc.triggerPreview(); };
@@ -725,12 +84,22 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     };
     exportButton.onClick = [this]
     {
-        auto src = proc.getCurrentFile();
-        if (! src.existsAsFile()) return;
-        auto def = src.getParentDirectory().getChildFile (src.getFileNameWithoutExtension() + "_reverse.wav");
-        chooser = std::make_unique<juce::FileChooser> ("Export reversed sample", def, "*.wav");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [this] (const juce::FileChooser& fc) { auto f = fc.getResult(); if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav")); });
+        if (! proc.getCurrentFile().existsAsFile()) return;
+        juce::PopupMenu m;
+        m.addItem (1, "Export this sample as WAV...");
+        m.addItem (2, "Export entire folder...");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton), [this] (int r)
+        {
+            if (r == 1)
+            {
+                auto src = proc.getCurrentFile();
+                auto def = src.getParentDirectory().getChildFile (src.getFileNameWithoutExtension() + "_reverse.wav");
+                chooser = std::make_unique<juce::FileChooser> ("Export reversed sample", def, "*.wav");
+                chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                                      [this] (const juce::FileChooser& fc) { auto f = fc.getResult(); if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav")); });
+            }
+            else if (r == 2) ExportDialog::show (proc, this);
+        });
     };
 
     kSize = &makeKnob (IDs::size, "SIZE");       kDecay = &makeKnob (IDs::decay, "DECAY");   kDamp = &makeKnob (IDs::damp, "DAMP");
@@ -740,6 +109,8 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kBass = &makeKnob (IDs::basscut, "BASS CUT");
     kDry = &makeKnob (IDs::dry, "HIT");          kWet = &makeKnob (IDs::wet, "SWELL");
     kPitch = &makeKnob (IDs::pitch, "PITCH");
+    kOut = &makeKnob (IDs::outGain, "OUT");
+    kOut->slider.getProperties().set ("unipolar", true);
     kVolStart = &makeKnob (IDs::volStart, "START"); kVolEnd = &makeKnob (IDs::volEnd, "END"); kVolTension = &makeKnob (IDs::volTension, "TENSION");
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, hitCol);
 
@@ -747,7 +118,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     nextButton.setTooltip ("Load the next supported audio file in the current folder.");
     loadButton.setTooltip ("Load an audio sample. WAV, AIFF, FLAC, MP3 and OGG are supported.");
     playButton.setTooltip ("Preview the current reverse-reverb result.");
-    exportButton.setTooltip ("Export the current processed result as a WAV file.");
+    exportButton.setTooltip ("Export this sample as a WAV, or render the whole folder with the current settings.");
     resetButton.setTooltip ("Reset editable sound controls to their defaults.");
     randomButton.setTooltip ("Randomize the reverse-reverb sound-design controls.");
     optionsButton.setTooltip ("Open interface options, including the global tooltip switch.");
@@ -758,18 +129,23 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     rangeCombo.setTooltip ("Choose the available pitch-bend range.");
     waveform.setTooltip ("Edit sample trim and volume-envelope points directly on the waveform.");
     dragPad.setTooltip ("Drag the rendered result out to a DAW or file destination.");
+    keytrackToggle.setTooltip ("Play the swell chromatically: notes above or below the root note change its pitch and length.");
+    rootCombo.setTooltip ("Root note: the MIDI note that plays the sound at its original pitch (C4 = MIDI 60).");
+    limiterToggle.setTooltip ("Safety soft limiter on the output. Keeps peaks below 0 dBFS. Also applied to exported WAVs.");
+    meter.setTooltip ("Output peak meter. The light latches when the output reaches the ceiling; click to clear.");
     pitchTension.setTooltip ("Adjust pitch-envelope tension. Double-click to reset.");
 
 
     addChildComponent (help);
+    sendLookAndFeelChange();       // rebuild slider value boxes with the custom look-and-feel (consistent text boxes)
     setSize (1060, 720);
     startTimerHz (10);
     timerCallback();
 }
 
-ReverseVerbEditor::~ReverseVerbEditor() { setLookAndFeel (nullptr); }
+RVContent::~RVContent() { setLookAndFeel (nullptr); }
 
-ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, const juce::String& textName)
+RVContent::Knob& RVContent::makeKnob (const juce::String& id, const juce::String& textName)
 {
     auto k = std::make_unique<Knob>();
     auto& s = k->slider;
@@ -789,8 +165,10 @@ ReverseVerbEditor::Knob& ReverseVerbEditor::makeKnob (const juce::String& id, co
     return *knobs.back();
 }
 
-void ReverseVerbEditor::timerCallback()
+void RVContent::timerCallback()
 {
+    undoButton.setEnabled (proc.getUndo().canUndo());
+    redoButton.setEnabled (proc.getUndo().canRedo());
     auto f = proc.getCurrentFile();
     fileLabel.setText (f.existsAsFile() ? f.getFileName() : "no sample loaded", juce::dontSendNotification);
     const int n = proc.getSampleCount();
@@ -805,7 +183,7 @@ void ReverseVerbEditor::timerCallback()
         if (k->slider.findColour (juce::Slider::rotarySliderFillColourId) != col) { k->slider.setColour (juce::Slider::rotarySliderFillColourId, col); k->slider.repaint(); }
 }
 
-void ReverseVerbEditor::applyTooltipSetting()
+void RVContent::applyTooltipSetting()
 {
     if (tooltipsEnabled)
     {
@@ -818,11 +196,16 @@ void ReverseVerbEditor::applyTooltipSetting()
     }
 }
 
-void ReverseVerbEditor::showOptionsMenu()
+void RVContent::showOptionsMenu()
 {
     juce::PopupMenu menu;
     menu.addSectionHeader ("Interface");
     menu.addItem (1, "Show tooltips", true, tooltipsEnabled);
+    menu.addSectionHeader ("Window size");
+    const float scales[] = { 0.75f, 1.0f, 1.25f, 1.5f };
+    for (int i = 0; i < 4; ++i)
+        menu.addItem (10 + i, juce::String (juce::roundToInt (scales[i] * 100.0f)) + " %", true,
+                      std::abs ((float) getWidth() / 1060.0f - scales[i]) < 0.02f);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&optionsButton),
                         [this] (int result)
                         {
@@ -831,10 +214,15 @@ void ReverseVerbEditor::showOptionsMenu()
                                 tooltipsEnabled = ! tooltipsEnabled;
                                 applyTooltipSetting();
                             }
+                            else if (result >= 10 && result <= 13 && onUiScale)
+                            {
+                                const float scales[] = { 0.75f, 1.0f, 1.25f, 1.5f };
+                                onUiScale (scales[result - 10]);
+                            }
                         });
 }
 
-void ReverseVerbEditor::paint (juce::Graphics& g)
+void RVContent::paint (juce::Graphics& g)
 {
     juce::ColourGradient grad (bg.brighter (0.07f), 0.0f, 0.0f, bg, 0.0f, (float) getHeight(), false);
     g.setGradientFill (grad);
@@ -858,7 +246,7 @@ void ReverseVerbEditor::paint (juce::Graphics& g)
     }
 }
 
-void ReverseVerbEditor::layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks)
+void RVContent::layoutKnobs (juce::Rectangle<int> area, std::initializer_list<Knob*> ks)
 {
     const int kw = area.getWidth() / (int) ks.size();
     for (auto* k : ks)
@@ -869,34 +257,42 @@ void ReverseVerbEditor::layoutKnobs (juce::Rectangle<int> area, std::initializer
     }
 }
 
-void ReverseVerbEditor::resized()
+void RVContent::resized()
 {
     help.setBounds (getLocalBounds());
     groups.clear();
     auto area = getLocalBounds().reduced (16);
 
     // header
-    auto header = area.removeFromTop (46);
-    auto titleArea = header.removeFromLeft (230);
-    title.setBounds (titleArea.removeFromTop (28));
-    subtitle.setBounds (titleArea);
-    helpButton.setBounds (header.removeFromRight (34).reduced (0, 7));
+    auto header = area.removeFromTop (54);
+    auto titleArea = header.removeFromLeft (310);
+    {
+        auto top = titleArea.removeFromTop (28);
+        redoButton.setBounds (top.removeFromRight (54).reduced (0, 3)); top.removeFromRight (4);
+        undoButton.setBounds (top.removeFromRight (54).reduced (0, 3)); top.removeFromRight (6);
+        title.setBounds (top);
+    }
+    presetBar.setBounds (titleArea.reduced (0, 2));
+    helpButton.setBounds (header.removeFromRight (34).reduced (0, 11));
     header.removeFromRight (4);
-    optionsButton.setBounds (header.removeFromRight (76).reduced (0, 7));
+    optionsButton.setBounds (header.removeFromRight (76).reduced (0, 11));
+    header.removeFromRight (10);
+    limiterToggle.setBounds (header.removeFromRight (62).reduced (0, 16));
+    meter.setBounds (header.removeFromRight (74).reduced (0, 13));
     header.removeFromRight (10);
     auto browser = header.withTrimmedLeft (20);
-    loadButton.setBounds (browser.removeFromRight (80).reduced (0, 7));
+    loadButton.setBounds (browser.removeFromRight (80).reduced (0, 11));
     browser.removeFromRight (8);
-    nextButton.setBounds (browser.removeFromRight (40).reduced (0, 7));
+    nextButton.setBounds (browser.removeFromRight (40).reduced (0, 11));
     browser.removeFromRight (4);
-    prevButton.setBounds (browser.removeFromRight (40).reduced (0, 7));
+    prevButton.setBounds (browser.removeFromRight (40).reduced (0, 11));
     browser.removeFromRight (8);
     countLabel.setBounds (browser.removeFromRight (56));
-    fileLabel.setBounds (browser.reduced (0, 7));
+    fileLabel.setBounds (browser.reduced (0, 11));
 
     // shape + waveform
     area.removeFromTop (10);
-    auto vis = area.removeFromTop (236);
+    auto vis = area.removeFromTop (228);
     shape.setBounds (vis.removeFromLeft (220));
     vis.removeFromLeft (10);
     waveform.setBounds (vis);
@@ -909,7 +305,9 @@ void ReverseVerbEditor::resized()
     dragPad.setBounds (row.removeFromLeft (120));       row.removeFromLeft (6);
     resetButton.setBounds (row.removeFromLeft (100));   row.removeFromLeft (6);
     randomButton.setBounds (row.removeFromLeft (80));   row.removeFromLeft (14);
-    alignToggle.setBounds (row.removeFromLeft (150));   row.removeFromLeft (10);
+    alignToggle.setBounds (row.removeFromLeft (150));   row.removeFromLeft (6);
+    keytrackToggle.setBounds (row.removeFromLeft (92)); row.removeFromLeft (4);
+    rootCombo.setBounds (row.removeFromLeft (70).reduced (0, 3)); row.removeFromLeft (10);
     syncCombo.setBounds (row.removeFromRight (100));    row.removeFromRight (6);
     syncToggle.setBounds (row.removeFromRight (70));
 
@@ -933,8 +331,8 @@ void ReverseVerbEditor::resized()
 
     const int total = rowB.getWidth() - 8 * 3;
     const int unit = total / 11;
-    layoutKnobs (group (rowB, unit * 4, "SWELL"), { kTail, kShape, kTone, kBass });
-    layoutKnobs (group (rowB, unit * 2, "MIX"), { kDry, kWet });
+    layoutKnobs (group (rowB, (int) ((float) unit * 3.5f), "SWELL"), { kTail, kShape, kTone, kBass });
+    layoutKnobs (group (rowB, (int) ((float) unit * 2.7f), "MIX"), { kDry, kWet, kOut });
     auto pitchArea = group (rowB, unit * 2 + 30, "PITCH");
     {
         auto right = pitchArea.removeFromRight (74);
@@ -947,15 +345,51 @@ void ReverseVerbEditor::resized()
     layoutKnobs (group (rowB, rowB.getWidth(), "VOLUME  (also drag the dots on the waveform)"), { kVolStart, kVolEnd, kVolTension });
 }
 
-bool ReverseVerbEditor::isInterestedInFileDrag (const juce::StringArray& files)
+bool RVContent::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (auto& f : files)
         if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg")) return true;
     return false;
 }
 
-void ReverseVerbEditor::filesDropped (const juce::StringArray& files, int, int)
+void RVContent::filesDropped (const juce::StringArray& files, int, int)
 {
     for (auto& f : files)
         if (proc.loadSampleFile (juce::File (f), true)) return;
+}
+
+// ---------------- Resizable editor ----------------
+
+ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
+    : AudioProcessorEditor (&p), proc (p), content (p)
+{
+    content.onUiScale = [this] (float s) { setSize (juce::roundToInt ((float) kBaseW * s), juce::roundToInt ((float) kBaseH * s)); };
+    addAndMakeVisible (content);
+
+    constrainer.setSizeLimits (kMinW, kMinW * kBaseH / kBaseW, kMaxW, kMaxW * kBaseH / kBaseW);
+    constrainer.setFixedAspectRatio ((double) kBaseW / (double) kBaseH);
+    setConstrainer (&constrainer);
+    setResizable (true, true);
+    setWantsKeyboardFocus (true);
+
+    const int w = juce::jlimit (kMinW, kMaxW, proc.getUiWidth());
+    setSize (w, juce::roundToInt ((float) w * (float) kBaseH / (float) kBaseW));
+}
+
+void ReverseVerbEditor::resized()
+{
+    const float s = (float) getWidth() / (float) kBaseW;
+    content.setTransform (juce::AffineTransform::scale (s));
+    content.setBounds (0, 0, kBaseW, kBaseH);
+    proc.setUiSize (getWidth(), getHeight());
+}
+
+bool ReverseVerbEditor::keyPressed (const juce::KeyPress& key)
+{
+    const auto m = key.getModifiers();
+    if (! m.isCommandDown()) return false;
+    const auto c = juce::CharacterFunctions::toUpperCase ((juce::juce_wchar) key.getKeyCode());
+    if (c == 'Z' && ! m.isShiftDown()) { proc.getUndo().undo(); return true; }
+    if ((c == 'Z' && m.isShiftDown()) || c == 'Y') { proc.getUndo().redo(); return true; }
+    return false;
 }

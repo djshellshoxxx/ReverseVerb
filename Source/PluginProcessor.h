@@ -5,41 +5,13 @@
 
 #pragma once
 #include <JuceHeader.h>
-
-namespace IDs
-{
-    static const juce::String dry = "dry", wet = "wet";
-    static const juce::String size = "size", decay = "decay", damp = "damp", diff = "diff", er = "er", sep = "sep", width = "width", gap = "gap";
-    static const juce::String tail = "tail", shape = "shape", tone = "tone", basscut = "basscut";
-    static const juce::String align = "align";
-    static const juce::String trimStart = "trimStart", trimEnd = "trimEnd";
-    static const juce::String sync = "sync", syncLen = "syncLen";
-    static const juce::String pitch = "pitch", pitchRange = "pitchRange", pitchTension = "pitchTension";
-    static const juce::String volStart = "volStart", volEnd = "volEnd", volTension = "volTension";
-}
-
-// FL-style tension curve: x in 0..1 -> 0..1. t>0 = slow start, t<0 = fast start.
-inline float tensionCurve (float x, float t)
-{
-    x = juce::jlimit (0.0f, 1.0f, x);
-    if (std::abs (t) < 0.001f) return x;
-    const float k = 1.0f + 5.0f * std::abs (t);
-    return t > 0.0f ? std::pow (x, k) : 1.0f - std::pow (1.0f - x, k);
-}
-
-struct RenderedSample
-{
-    juce::AudioBuffer<float> audio;     // final playable buffer (stereo)
-    int hitIndex = -1;                  // sample where the dry hit starts, -1 if trimmed out
-    double sampleRate = 44100.0;
-    int beats = 0;                      // >0 when synced: draw this many beat lines
-    int beatsPerBar = 4;
-    double fullLengthSec = 0.0;         // untrimmed swell+hit length
-    double trimStartSec = 0.0, trimEndSec = 0.0;
-    std::vector<float> pitchSemi;       // one entry per envStep samples
-    std::vector<float> gainLin;         // one entry per envStep samples
-    static constexpr int envStep = 256;
-};
+#include "Params.h"
+#include "OutputStage.h"
+#include "PresetManager.h"
+#include "UndoHistory.h"
+#include "BatchExporter.h"
+#include "Voices.h"
+#include "dsp/RenderEngine.h"
 
 class ReverseVerbProcessor : public juce::AudioProcessor,
                              private juce::Timer,
@@ -76,9 +48,23 @@ public:
     int getSampleIndex() const { return currentIndex; }
     int getSampleCount() const { return folderFiles.size(); }
 
+    PresetManager& getPresets() { return *presets; }
+    UndoHistory& getUndo() { return *undo; }
+
+    int getUiWidth() const { return uiW.load(); }
+    int getUiHeight() const { return uiH.load(); }
+    void setUiSize (int w, int h) { uiW = w; uiH = h; }
+
+    RenderSettings currentSettings() const;
+    void renderBlocking();                          // render now with current parameters (message / non-realtime thread)
+    float takePeak (int ch) { return outputStage.takePeak (ch); }
+    bool clipLatched() const { return outputStage.clipLatched(); }
+    void clearClip() { outputStage.clearClip(); }
+
     void triggerPreview() { triggerRequest = 1; }
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
+    BatchJob makeBatchJob (const juce::StringArray& files, const BatchOptions& options) const;   // snapshot for batch export
     void resetEdits();
     void randomizeReverb();
 
@@ -91,19 +77,15 @@ public:
     juce::AudioProcessorValueTreeState apvts;
 
 private:
-    static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void parameterChanged (const juce::String&, float) override { dirty = true; }
     void timerCallback() override;
     void render();
     void refreshFolderList (const juce::File& f);
 
-    struct Voice { bool active = false; int pos = 0; float gain = 1.0f; juce::uint32 id = 0; };
-    void startVoice (float gain);
-    void renderRange (juce::AudioBuffer<float>& out, const RenderedSample& r, int start, int num, float dry, float wet);
 
     juce::AudioFormatManager formatManager;
     juce::CriticalSection sourceLock;
-    juce::AudioBuffer<float> sourceBuffer;
+    std::shared_ptr<const juce::AudioBuffer<float>> sourceBuffer;
     double sourceSR = 44100.0;
     juce::File currentFile;
     juce::Array<juce::File> folderFiles;
@@ -113,18 +95,16 @@ private:
     struct RenderThread : public juce::Thread
     {
         explicit RenderThread (ReverseVerbProcessor& o) : juce::Thread ("ReverseVerb render"), owner (o) {}
-        void run() override { while (! threadShouldExit()) { wait (-1); if (threadShouldExit()) break; owner.render(); } }
+        void run() override { while (! threadShouldExit()) { wait (-1); if (threadShouldExit()) break; owner.render(); sleep (20); } }   // >=20 ms between swaps (crossfade safety)
         ReverseVerbProcessor& owner;
     };
     std::unique_ptr<RenderThread> renderThread;
     juce::CriticalSection renderMutex;                  // serialises render() (bg thread + export)
 
-    // Cached stage 1-7 (reverb, reverse, filters, shape, combine). Trim / pitch / volume edits reuse it.
-    struct RenderCache { std::array<double, 17> key {}; juce::AudioBuffer<float> full; int hitLen = 0, swellLen = 0, beats = 0; bool valid = false; };
     RenderCache cache;
     int sourceVersion = 0;                              // guarded by sourceLock
     std::atomic<int> pendingLatency { -1 };             // applied on the message thread
-    std::array<std::shared_ptr<RenderedSample>, 2> retired;  // old renders freed on the render thread, never the audio thread
+    std::array<std::shared_ptr<RenderedSample>, 8> retired;  // old renders freed on the render thread, never the audio thread
     unsigned retireIdx = 0;
 
     mutable juce::SpinLock renderLock;
@@ -136,10 +116,19 @@ private:
     std::atomic<bool> dirty { false }, previewAfterRender { false };
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
 
-    std::array<Voice, 8> voices;
-    juce::uint32 voiceCounter = 0;
+    std::atomic<int> uiW { 1060 }, uiH { 720 };          // editor size, saved with the project
+    std::unique_ptr<PresetManager> presets;
+    std::unique_ptr<UndoHistory> undo;
+    VoiceBank voices;
+    OutputStage outputStage;
+    std::shared_ptr<const RenderedSample> lastBuffer;   // audio thread only: detects buffer swaps for the crossfade
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
+    std::atomic<float>* alignParam = nullptr;
+    std::atomic<float>* keytrackParam = nullptr;
+    std::atomic<float>* rootParam = nullptr;
+    std::atomic<float>* outGainParam = nullptr;
+    std::atomic<float>* limiterParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReverseVerbProcessor)
 };
