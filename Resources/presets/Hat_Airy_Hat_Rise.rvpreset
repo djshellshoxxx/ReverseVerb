@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ReverseVerbPreset version="1" name="Airy Hat Rise" category="Hat">
+  <P id="dry" v="1"/>
+  <P id="wet" v="0.8"/>
+  <P id="size" v="0.6"/>
+  <P id="decay" v="0.7"/>
+  <P id="damp" v="0.2"/>
+  <P id="diff" v="0.6"/>
+  <P id="er" v="0.5"/>
+  <P id="sep" v="0.4"/>
+  <P id="width" v="1"/>
+  <P id="gap" v="0"/>
+  <P id="tail" v="1.0"/>
+  <P id="shape" v="0.4"/>
+  <P id="tone" v="20000"/>
+  <P id="basscut" v="600"/>
+  <P id="pitch" v="0"/>
+  <P id="pitchRange" v="0"/>
+  <P id="pitchTension" v="0"/>
+  <P id="volStart" v="1"/>
+  <P id="volEnd" v="1"/>
+  <P id="volTension" v="0"/>
+  <P id="sync" v="0"/>
+  <P id="syncLen" v="2"/>
+  <P id="align" v="0"/>
+  <P id="keytrack" v="0"/>
+  <P id="rootNote" v="60"/>
+  <P id="outGain" v="0"/>
+  <P id="limiter" v="1"/>
+</ReverseVerbPreset>

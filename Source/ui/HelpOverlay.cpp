@@ -11,6 +11,10 @@ using namespace RVColours;
 
 static const char* kHelpText = R"(REVERSE VERB - what everything does
 
+PRESETS
+  The bar at the top left browses presets: < > step through them, the name opens the list (Factory and User), SAVE stores the current settings, and A/B switches between two sets of settings so you can compare. A * after the name means you changed something since loading it.
+  Presets store the sound settings only - not the sample or the trim points. User presets live in your application-data folder (menu > Open preset folder).
+
 WORKFLOW
   LOAD (or drop a file on the window) picks a hit. < > steps through every sample in that folder and auto-plays it with your current settings.
   Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.

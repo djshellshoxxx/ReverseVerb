@@ -36,10 +36,14 @@ clap_juce_extensions_plugin(TARGET ReverseVerb
     CLAP_ID "com.circuitdriftlabs.reverseverb"
     CLAP_FEATURES instrument "audio-effect" reverb)
 
+file(GLOB RV_FACTORY_PRESETS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/presets/*.rvpreset")
+juce_add_binary_data(ReverseVerbPresets SOURCES ${RV_FACTORY_PRESETS})
+
 juce_generate_juce_header(ReverseVerb)
 
 target_sources(ReverseVerb PRIVATE
     Source/Params.cpp
+    Source/PresetManager.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
     Source/Voices.cpp
@@ -48,6 +52,7 @@ target_sources(ReverseVerb PRIVATE
     Source/ui/DragOutPad.cpp
     Source/ui/HelpOverlay.cpp
     Source/ui/LevelMeter.cpp
+    Source/ui/PresetBar.cpp
     Source/ui/RVLookAndFeel.cpp
     Source/ui/TensionBox.cpp
     Source/ui/Theme.cpp
@@ -60,7 +65,7 @@ target_compile_definitions(ReverseVerb PUBLIC
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 
 target_link_libraries(ReverseVerb
-    PRIVATE juce::juce_audio_utils
+    PRIVATE ReverseVerbPresets juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
 
 option(RV_BUILD_TESTS "Build the ReverseVerb unit tests" ON)
@@ -70,15 +75,19 @@ if(RV_BUILD_TESTS)
     juce_add_console_app(ReverseVerbTests PRODUCT_NAME "ReverseVerbTests")
     juce_generate_juce_header(ReverseVerbTests)
     target_sources(ReverseVerbTests PRIVATE
+        Tests/PresetTests.cpp
         Tests/RenderTests.cpp
+        Tests/UiTests.cpp
         Tests/VoiceTests.cpp
         Tests/TestMain.cpp)
     target_compile_definitions(ReverseVerbTests PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+        JUCE_MODAL_LOOPS_PERMITTED=1
         RV_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/data")
     target_link_libraries(ReverseVerbTests PRIVATE
         ReverseVerb
+        ReverseVerbPresets
         juce::juce_audio_utils
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)

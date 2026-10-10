@@ -7,6 +7,7 @@
 #include <JuceHeader.h>
 #include "Params.h"
 #include "OutputStage.h"
+#include "PresetManager.h"
 #include "Voices.h"
 #include "dsp/RenderEngine.h"
 
@@ -44,6 +45,8 @@ public:
     juce::File getCurrentFile() const { return currentFile; }
     int getSampleIndex() const { return currentIndex; }
     int getSampleCount() const { return folderFiles.size(); }
+
+    PresetManager& getPresets() { return *presets; }
 
     int getUiWidth() const { return uiW.load(); }
     int getUiHeight() const { return uiH.load(); }
@@ -110,6 +113,7 @@ private:
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
 
     std::atomic<int> uiW { 1060 }, uiH { 720 };          // editor size, saved with the project
+    std::unique_ptr<PresetManager> presets;
     VoiceBank voices;
     OutputStage outputStage;
     std::shared_ptr<const RenderedSample> lastBuffer;   // audio thread only: detects buffer swaps for the crossfade

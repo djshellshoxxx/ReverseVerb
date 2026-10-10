@@ -14,6 +14,7 @@
 #include "ui/DragOutPad.h"
 #include "ui/HelpOverlay.h"
 #include "ui/LevelMeter.h"
+#include "ui/PresetBar.h"
 
 // The whole UI, laid out at a fixed 1060x720 "design size". ReverseVerbEditor scales it to the window.
 class RVContent : public juce::Component,
@@ -60,6 +61,7 @@ private:
     DragOutPad dragPad;
     TensionBox pitchTension;
     LevelMeter meter;
+    PresetBar presetBar;
     HelpOverlay help;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
     bool tooltipsEnabled = true;

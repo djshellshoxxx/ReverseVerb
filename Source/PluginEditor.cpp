@@ -10,7 +10,7 @@ using namespace RVColours;
 // ---------------- Editor ----------------
 
 RVContent::RVContent (ReverseVerbProcessor& p)
-    : proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension), meter (p)
+    : proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension), meter (p), presetBar (p)
 {
     setLookAndFeel (&lnf);
     applyTooltipSetting();
@@ -21,7 +21,6 @@ RVContent::RVContent (ReverseVerbProcessor& p)
     subtitle.setText ("reverse reverb swell for hits", juce::dontSendNotification);
     subtitle.setFont (juce::Font (juce::FontOptions (12.0f)));
     subtitle.setColour (juce::Label::textColourId, textDim);
-    addAndMakeVisible (subtitle);
 
     fileLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
     fileLabel.setJustificationType (juce::Justification::centred);
@@ -37,6 +36,7 @@ RVContent::RVContent (ReverseVerbProcessor& p)
         addAndMakeVisible (b);
     for (auto* t : { &alignToggle, &syncToggle, &keytrackToggle, &limiterToggle }) addAndMakeVisible (t);
     addAndMakeVisible (meter);
+    addAndMakeVisible (presetBar);
     addAndMakeVisible (rootCombo);
     addAndMakeVisible (waveform);
     addAndMakeVisible (shape);
@@ -123,6 +123,7 @@ RVContent::RVContent (ReverseVerbProcessor& p)
 
 
     addChildComponent (help);
+    sendLookAndFeelChange();       // rebuild slider value boxes with the custom look-and-feel (consistent text boxes)
     setSize (1060, 720);
     startTimerHz (10);
     timerCallback();
@@ -247,30 +248,30 @@ void RVContent::resized()
     auto area = getLocalBounds().reduced (16);
 
     // header
-    auto header = area.removeFromTop (46);
-    auto titleArea = header.removeFromLeft (230);
+    auto header = area.removeFromTop (54);
+    auto titleArea = header.removeFromLeft (310);
     title.setBounds (titleArea.removeFromTop (28));
-    subtitle.setBounds (titleArea);
-    helpButton.setBounds (header.removeFromRight (34).reduced (0, 7));
+    presetBar.setBounds (titleArea.reduced (0, 2));
+    helpButton.setBounds (header.removeFromRight (34).reduced (0, 11));
     header.removeFromRight (4);
-    optionsButton.setBounds (header.removeFromRight (76).reduced (0, 7));
+    optionsButton.setBounds (header.removeFromRight (76).reduced (0, 11));
     header.removeFromRight (10);
-    limiterToggle.setBounds (header.removeFromRight (62).reduced (0, 12));
-    meter.setBounds (header.removeFromRight (74).reduced (0, 9));
+    limiterToggle.setBounds (header.removeFromRight (62).reduced (0, 16));
+    meter.setBounds (header.removeFromRight (74).reduced (0, 13));
     header.removeFromRight (10);
     auto browser = header.withTrimmedLeft (20);
-    loadButton.setBounds (browser.removeFromRight (80).reduced (0, 7));
+    loadButton.setBounds (browser.removeFromRight (80).reduced (0, 11));
     browser.removeFromRight (8);
-    nextButton.setBounds (browser.removeFromRight (40).reduced (0, 7));
+    nextButton.setBounds (browser.removeFromRight (40).reduced (0, 11));
     browser.removeFromRight (4);
-    prevButton.setBounds (browser.removeFromRight (40).reduced (0, 7));
+    prevButton.setBounds (browser.removeFromRight (40).reduced (0, 11));
     browser.removeFromRight (8);
     countLabel.setBounds (browser.removeFromRight (56));
-    fileLabel.setBounds (browser.reduced (0, 7));
+    fileLabel.setBounds (browser.reduced (0, 11));
 
     // shape + waveform
     area.removeFromTop (10);
-    auto vis = area.removeFromTop (236);
+    auto vis = area.removeFromTop (228);
     shape.setBounds (vis.removeFromLeft (220));
     vis.removeFromLeft (10);
     waveform.setBounds (vis);

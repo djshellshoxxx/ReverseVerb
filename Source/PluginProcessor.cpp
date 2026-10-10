@@ -11,6 +11,7 @@ ReverseVerbProcessor::ReverseVerbProcessor()
       apvts (*this, nullptr, "PARAMS", createParameterLayout())
 {
     formatManager.registerBasicFormats();
+    presets = std::make_unique<PresetManager> (apvts, PresetManager::defaultUserFolder());
     for (auto* id : { &IDs::size, &IDs::decay, &IDs::damp, &IDs::diff, &IDs::er, &IDs::sep, &IDs::width, &IDs::gap,
                       &IDs::tail, &IDs::shape, &IDs::tone, &IDs::basscut, &IDs::align, &IDs::trimStart, &IDs::trimEnd,
                       &IDs::sync, &IDs::syncLen, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
@@ -302,6 +303,7 @@ void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = apvts.copyState();
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
     state.setProperty ("stateVersion", 2, nullptr);
+    state.setProperty ("presetName", presets->currentName(), nullptr);
     state.setProperty ("uiW", uiW.load(), nullptr);
     state.setProperty ("uiH", uiH.load(), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
@@ -318,6 +320,7 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
         uiH = (int) state.getProperty ("uiH", 720);
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
+        presets->restoreName (state.getProperty ("presetName", "").toString());
         renderBlocking();               // project load: audio is ready before the first note / offline bounce
     }
 }
