@@ -51,3 +51,30 @@ target_compile_definitions(ReverseVerb PUBLIC
 target_link_libraries(ReverseVerb
     PRIVATE juce::juce_audio_utils
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+
+option(RV_BUILD_TESTS "Build the ReverseVerb unit tests" ON)
+option(RV_SANITIZE "Build tests with AddressSanitizer + UBSan (GCC/Clang)" OFF)
+if(RV_BUILD_TESTS)
+    enable_testing()
+    juce_add_console_app(ReverseVerbTests PRODUCT_NAME "ReverseVerbTests")
+    juce_generate_juce_header(ReverseVerbTests)
+    target_sources(ReverseVerbTests PRIVATE
+        Tests/RenderTests.cpp
+        Tests/TestMain.cpp)
+    target_compile_definitions(ReverseVerbTests PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        RV_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/data")
+    target_link_libraries(ReverseVerbTests PRIVATE
+        ReverseVerb
+        juce::juce_audio_utils
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+    if(RV_SANITIZE AND NOT MSVC)
+        target_compile_options(ReverseVerbTests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(ReverseVerbTests PRIVATE -fsanitize=address,undefined)
+        target_compile_options(ReverseVerb PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(ReverseVerb PUBLIC -fsanitize=address,undefined)
+    endif()
+    add_test(NAME ReverseVerbTests COMMAND ReverseVerbTests)
+endif()
