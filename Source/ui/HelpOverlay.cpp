@@ -21,7 +21,7 @@ PRESETS
 WORKFLOW
   LOAD (or drop a file on the window) picks a hit. < > steps through every sample in that folder and auto-plays it with your current settings.
   Notes in the piano roll trigger the sound (velocity = volume). Click the waveform or PLAY to audition.
-  EXPORT WAV saves the rendered sample. DRAG TO DAW: drag the pad straight into the channel rack / playlist.
+  EXPORT saves the rendered sample as a WAV, or renders EVERY sample in the current folder with your current settings ("Export entire folder": choose output folder, name pattern, bit depth, sample rate, normalizing; runs in the background with progress and cancel). DRAG TO DAW: drag the pad straight into the channel rack / playlist.
   Hit on note (PDC): reports the swell length as latency so the DRY HIT lands exactly on the note and the swell starts early. Turn off if you'd rather place notes early yourself.
   RESET EDITS clears trim, pitch and volume envelope. RANDOM rolls new reverb settings.
 

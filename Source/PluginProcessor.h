@@ -9,6 +9,7 @@
 #include "OutputStage.h"
 #include "PresetManager.h"
 #include "UndoHistory.h"
+#include "BatchExporter.h"
 #include "Voices.h"
 #include "dsp/RenderEngine.h"
 
@@ -54,6 +55,7 @@ public:
     int getUiHeight() const { return uiH.load(); }
     void setUiSize (int w, int h) { uiW = w; uiH = h; }
 
+    RenderSettings currentSettings() const;
     void renderBlocking();                          // render now with current parameters (message / non-realtime thread)
     float takePeak (int ch) { return outputStage.takePeak (ch); }
     bool clipLatched() const { return outputStage.clipLatched(); }
@@ -62,6 +64,7 @@ public:
     void triggerPreview() { triggerRequest = 1; }
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
+    BatchJob makeBatchJob (const juce::StringArray& files, const BatchOptions& options) const;   // snapshot for batch export
     void resetEdits();
     void randomizeReverb();
 
@@ -79,7 +82,6 @@ private:
     void render();
     void refreshFolderList (const juce::File& f);
 
-    RenderSettings currentSettings() const;
 
     juce::AudioFormatManager formatManager;
     juce::CriticalSection sourceLock;

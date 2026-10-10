@@ -1,6 +1,7 @@
 // ReverseVerb™ UI smoke tests (need a display: run under xvfb with RV_UI_TESTS=1).
 // Copyright © 2026 Sheldon Davidson. All rights reserved.
 #include "TestHelpers.h"
+#include "../Source/ui/ExportDialog.h"
 
 using namespace rvtest;
 
@@ -48,6 +49,18 @@ struct UiTest : public juce::UnitTest
             }
         }
         expectEquals (p.getUiWidth(), 1590);                                    // size is remembered
+
+        beginTest ("export dialog builds and renders");
+        {
+            ExportDialog dlg (p);
+            auto img = dlg.createComponentSnapshot (dlg.getLocalBounds(), true, 1.0f);
+            expect (img.isValid() && img.getWidth() == dlg.getWidth(), "dialog snapshot");
+            if (outDir.isNotEmpty())
+            {
+                juce::File f (outDir + "/export_dialog.png"); f.deleteFile();
+                if (auto os = f.createOutputStream()) { juce::PNGImageFormat png; png.writeImageToStream (img, *os); }
+            }
+        }
     }
 };
 static UiTest uiTest;

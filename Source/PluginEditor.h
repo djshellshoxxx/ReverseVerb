@@ -15,6 +15,7 @@
 #include "ui/HelpOverlay.h"
 #include "ui/LevelMeter.h"
 #include "ui/PresetBar.h"
+#include "ui/ExportDialog.h"
 
 // The whole UI, laid out at a fixed 1060x720 "design size". ReverseVerbEditor scales it to the window.
 class RVContent : public juce::Component,
@@ -51,7 +52,7 @@ private:
     juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel;
     juce::TextButton undoButton { "UNDO" }, redoButton { "REDO" };
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
-                     exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, optionsButton { "OPTIONS" }, helpButton { "?" };
+                     exportButton { "EXPORT  v" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, optionsButton { "OPTIONS" }, helpButton { "?" };
     juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" }, keytrackToggle { "KEYTRACK" }, limiterToggle { "LIMIT" };
     juce::ComboBox syncCombo, rangeCombo, rootCombo;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, keytrackAtt, limiterAtt;

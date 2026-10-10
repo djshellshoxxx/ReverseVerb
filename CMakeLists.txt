@@ -42,6 +42,7 @@ juce_add_binary_data(ReverseVerbPresets SOURCES ${RV_FACTORY_PRESETS})
 juce_generate_juce_header(ReverseVerb)
 
 target_sources(ReverseVerb PRIVATE
+    Source/BatchExporter.cpp
     Source/Params.cpp
     Source/PresetManager.cpp
     Source/UndoHistory.cpp
@@ -50,6 +51,7 @@ target_sources(ReverseVerb PRIVATE
     Source/Voices.cpp
     Source/dsp/RenderEngine.cpp
     Source/ui/DiffusionShape.cpp
+    Source/ui/ExportDialog.cpp
     Source/ui/DragOutPad.cpp
     Source/ui/HelpOverlay.cpp
     Source/ui/LevelMeter.cpp
@@ -76,6 +78,7 @@ if(RV_BUILD_TESTS)
     juce_add_console_app(ReverseVerbTests PRODUCT_NAME "ReverseVerbTests")
     juce_generate_juce_header(ReverseVerbTests)
     target_sources(ReverseVerbTests PRIVATE
+        Tests/BatchTests.cpp
         Tests/PresetTests.cpp
         Tests/RenderTests.cpp
         Tests/UndoTests.cpp

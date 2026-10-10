@@ -84,12 +84,22 @@ RVContent::RVContent (ReverseVerbProcessor& p)
     };
     exportButton.onClick = [this]
     {
-        auto src = proc.getCurrentFile();
-        if (! src.existsAsFile()) return;
-        auto def = src.getParentDirectory().getChildFile (src.getFileNameWithoutExtension() + "_reverse.wav");
-        chooser = std::make_unique<juce::FileChooser> ("Export reversed sample", def, "*.wav");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [this] (const juce::FileChooser& fc) { auto f = fc.getResult(); if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav")); });
+        if (! proc.getCurrentFile().existsAsFile()) return;
+        juce::PopupMenu m;
+        m.addItem (1, "Export this sample as WAV...");
+        m.addItem (2, "Export entire folder...");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton), [this] (int r)
+        {
+            if (r == 1)
+            {
+                auto src = proc.getCurrentFile();
+                auto def = src.getParentDirectory().getChildFile (src.getFileNameWithoutExtension() + "_reverse.wav");
+                chooser = std::make_unique<juce::FileChooser> ("Export reversed sample", def, "*.wav");
+                chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+                                      [this] (const juce::FileChooser& fc) { auto f = fc.getResult(); if (f != juce::File()) proc.exportWav (f.withFileExtension ("wav")); });
+            }
+            else if (r == 2) ExportDialog::show (proc, this);
+        });
     };
 
     kSize = &makeKnob (IDs::size, "SIZE");       kDecay = &makeKnob (IDs::decay, "DECAY");   kDamp = &makeKnob (IDs::damp, "DAMP");
@@ -108,7 +118,7 @@ RVContent::RVContent (ReverseVerbProcessor& p)
     nextButton.setTooltip ("Load the next supported audio file in the current folder.");
     loadButton.setTooltip ("Load an audio sample. WAV, AIFF, FLAC, MP3 and OGG are supported.");
     playButton.setTooltip ("Preview the current reverse-reverb result.");
-    exportButton.setTooltip ("Export the current processed result as a WAV file.");
+    exportButton.setTooltip ("Export this sample as a WAV, or render the whole folder with the current settings.");
     resetButton.setTooltip ("Reset editable sound controls to their defaults.");
     randomButton.setTooltip ("Randomize the reverse-reverb sound-design controls.");
     optionsButton.setTooltip ("Open interface options, including the global tooltip switch.");

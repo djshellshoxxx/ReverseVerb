@@ -5,6 +5,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ExportMix.h"
 
 ReverseVerbProcessor::ReverseVerbProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
@@ -218,6 +219,16 @@ void ReverseVerbProcessor::render()
     if (wantPreview) triggerPreview();
 }
 
+BatchJob ReverseVerbProcessor::makeBatchJob (const juce::StringArray& files, const BatchOptions& options) const
+{
+    BatchJob j;
+    j.settings = currentSettings();
+    j.dry = dryParam->load(); j.wet = wetParam->load();
+    j.outGainDb = outGainParam->load(); j.limiter = limiterParam->load() > 0.5f;
+    j.files = files; j.options = options;
+    return j;
+}
+
 // ---------------- samples ----------------
 
 void ReverseVerbProcessor::refreshFolderList (const juce::File& f)
@@ -272,24 +283,7 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
     auto r = getRendered();
     if (r == nullptr || r->audio.getNumSamples() == 0) return false;
     const int n = r->audio.getNumSamples();
-    const int hitAt = r->hitIndex >= 0 ? r->hitIndex : n;
-    juce::AudioBuffer<float> mix;
-    mix.makeCopyOf (r->audio);
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        mix.applyGain (ch, 0, hitAt, wetParam->load());
-        mix.applyGain (ch, hitAt, n - hitAt, dryParam->load());
-    }
-    {   // same output stage as playback so the export matches what you hear
-        const float og = juce::Decibels::decibelsToGain (outGainParam->load(), -60.0f);
-        const bool lim = limiterParam->load() > 0.5f;
-        if (og != 1.0f || lim)
-            for (int ch = 0; ch < 2; ++ch)
-            {
-                float* d = mix.getWritePointer (ch);
-                for (int i = 0; i < n; ++i) d[i] = lim ? softClip (d[i] * og) : d[i] * og;
-            }
-    }
+    auto mix = mixForExport (*r, dryParam->load(), wetParam->load(), outGainParam->load(), limiterParam->load() > 0.5f);
     dest.deleteFile();
     std::unique_ptr<juce::FileOutputStream> os (dest.createOutputStream());
     if (os == nullptr || ! os->openedOk()) return false;
