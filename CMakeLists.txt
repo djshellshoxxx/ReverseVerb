@@ -43,7 +43,14 @@ target_sources(ReverseVerb PRIVATE
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
     Source/Voices.cpp
-    Source/dsp/RenderEngine.cpp)
+    Source/dsp/RenderEngine.cpp
+    Source/ui/DiffusionShape.cpp
+    Source/ui/DragOutPad.cpp
+    Source/ui/HelpOverlay.cpp
+    Source/ui/RVLookAndFeel.cpp
+    Source/ui/TensionBox.cpp
+    Source/ui/Theme.cpp
+    Source/ui/WaveformDisplay.cpp)
 
 target_compile_definitions(ReverseVerb PUBLIC
     JUCE_WEB_BROWSER=0
