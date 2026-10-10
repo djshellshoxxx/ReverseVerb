@@ -41,8 +41,13 @@ SYNC
 PITCH
   PITCH sweeps the pitch from 0 at the start to the knob amount at the end. Range chooses 1, 2 or 4 octaves. CURVE box: drag up/down to change how fast the sweep happens.
 
-MIX
-  HIT: level of the dry hit.  SWELL: level of the reversed reverb.
+MIX / OUTPUT
+  HIT: level of the dry hit.  SWELL: level of the reversed reverb.  OUT: overall output level (-24 to +12 dB).
+  LIMIT: safety soft limiter that keeps peaks under 0 dBFS (also applied to exports). The meter at the top shows output peaks; its light latches on clipping - click it to clear.
+
+KEYTRACK
+  Turn KEYTRACK on to play the swell chromatically. The root note plays the sound at its original pitch (C4 = MIDI 60); higher notes play it faster and shorter, lower notes slower and longer.
+  With Hit on note (PDC) on, the dry hit still lands on the note when pitched.
 )";
 
 HelpOverlay::HelpOverlay()

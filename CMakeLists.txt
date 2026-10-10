@@ -47,6 +47,7 @@ target_sources(ReverseVerb PRIVATE
     Source/ui/DiffusionShape.cpp
     Source/ui/DragOutPad.cpp
     Source/ui/HelpOverlay.cpp
+    Source/ui/LevelMeter.cpp
     Source/ui/RVLookAndFeel.cpp
     Source/ui/TensionBox.cpp
     Source/ui/Theme.cpp
@@ -70,6 +71,7 @@ if(RV_BUILD_TESTS)
     juce_generate_juce_header(ReverseVerbTests)
     target_sources(ReverseVerbTests PRIVATE
         Tests/RenderTests.cpp
+        Tests/VoiceTests.cpp
         Tests/TestMain.cpp)
     target_compile_definitions(ReverseVerbTests PRIVATE
         JUCE_WEB_BROWSER=0

@@ -16,6 +16,8 @@ namespace IDs
     static const juce::String sync = "sync", syncLen = "syncLen";
     static const juce::String pitch = "pitch", pitchRange = "pitchRange", pitchTension = "pitchTension";
     static const juce::String volStart = "volStart", volEnd = "volEnd", volTension = "volTension";
+    // added in state version 2 (append-only)
+    static const juce::String keytrack = "keytrack", rootNote = "rootNote", outGain = "outGain", limiter = "limiter";
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();

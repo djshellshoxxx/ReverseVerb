@@ -13,6 +13,7 @@
 #include "ui/TensionBox.h"
 #include "ui/DragOutPad.h"
 #include "ui/HelpOverlay.h"
+#include "ui/LevelMeter.h"
 
 class ReverseVerbEditor : public juce::AudioProcessorEditor,
                           public juce::DragAndDropContainer,
@@ -47,21 +48,22 @@ private:
     juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel;
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, optionsButton { "OPTIONS" }, helpButton { "?" };
-    juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" };
-    juce::ComboBox syncCombo, rangeCombo;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt;
+    juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" }, keytrackToggle { "KEYTRACK" }, limiterToggle { "LIMIT" };
+    juce::ComboBox syncCombo, rangeCombo, rootCombo;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> alignAtt, syncAtt, keytrackAtt, limiterAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncComboAtt, rangeComboAtt, rootComboAtt;
 
     WaveformDisplay waveform;
     DiffusionShape shape;
     DragOutPad dragPad;
     TensionBox pitchTension;
+    LevelMeter meter;
     HelpOverlay help;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
     bool tooltipsEnabled = true;
 
     std::vector<std::unique_ptr<Knob>> knobs;
-    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass, *kDry, *kWet, *kPitch, *kVolStart, *kVolEnd, *kVolTension;
+    Knob *kSize, *kDecay, *kDamp, *kDiff, *kEr, *kSep, *kWidth, *kGap, *kTail, *kShape, *kTone, *kBass, *kDry, *kWet, *kPitch, *kVolStart, *kVolEnd, *kVolTension, *kOut;
     std::vector<Group> groups;
     std::unique_ptr<juce::FileChooser> chooser;
 

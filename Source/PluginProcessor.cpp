@@ -18,6 +18,11 @@ ReverseVerbProcessor::ReverseVerbProcessor()
         apvts.addParameterListener (*id, this);
     dryParam = apvts.getRawParameterValue (IDs::dry);
     wetParam = apvts.getRawParameterValue (IDs::wet);
+    alignParam = apvts.getRawParameterValue (IDs::align);
+    keytrackParam = apvts.getRawParameterValue (IDs::keytrack);
+    rootParam = apvts.getRawParameterValue (IDs::rootNote);
+    outGainParam = apvts.getRawParameterValue (IDs::outGain);
+    limiterParam = apvts.getRawParameterValue (IDs::limiter);
     rendered = std::make_shared<RenderedSample>();
     renderThread = std::make_unique<RenderThread> (*this);
     renderThread->startThread (juce::Thread::Priority::background);
@@ -65,10 +70,28 @@ void ReverseVerbProcessor::randomizeReverb()
 
 void ReverseVerbProcessor::prepareToPlay (double sampleRate, int)
 {
-    if (std::abs (sampleRate - hostSampleRate.load()) > 0.5) dirty = true;
+    const bool srChanged = std::abs (sampleRate - hostSampleRate.load()) > 0.5;
     hostSampleRate = sampleRate;
+    voices.prepare (sampleRate);
     voices.stopAll();
+    outputStage.prepare (sampleRate);
+    lastBuffer.reset();
     playhead = -1;
+
+    bool haveSource;
+    { const juce::ScopedLock sl (sourceLock); haveSource = sourceBuffer != nullptr; }
+    const auto current = getRendered();
+    if (haveSource && (srChanged || dirty.load() || current == nullptr || current->audio.getNumSamples() == 0))
+        renderBlocking();               // prepareToPlay is not realtime: have audio ready before the first note
+    else if (srChanged)
+        dirty = true;
+}
+
+void ReverseVerbProcessor::renderBlocking()
+{
+    const juce::ScopedLock rl (renderMutex);
+    dirty = false;
+    render();
 }
 
 bool ReverseVerbProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -89,6 +112,9 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             if (auto bpm = pos->getBpm())
                 if (*bpm > 20.0) hostBpm = *bpm;
 
+    if (isNonRealtime() && dirty.exchange (false))
+        render();                       // offline bounce: render synchronously so results are deterministic
+
     std::shared_ptr<const RenderedSample> r;
     {
         juce::SpinLock::ScopedTryLockType tl (renderLock);
@@ -97,22 +123,38 @@ void ReverseVerbProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     }
     if (r == nullptr || r->audio.getNumSamples() == 0) { playhead = -1; return; }
 
+    if (r != lastBuffer)
+    {
+        if (lastBuffer != nullptr) voices.onBufferSwap (lastBuffer, *r);   // click-free: crossfade playing voices
+        lastBuffer = r;
+    }
+
     if (stopRequest.exchange (0) != 0) voices.stopAll();
     if (triggerRequest.exchange (0) != 0) voices.start (1.0f);
 
-    const float dry = dryParam->load(), wet = wetParam->load();
+    voices.setGains (dryParam->load(), wetParam->load());
+    const bool keytrack = keytrackParam->load() > 0.5f;
+    const int root = (int) rootParam->load();
+    const bool align = alignParam->load() > 0.5f;
+
     const int numSamples = buffer.getNumSamples();
     int pos = 0;
     for (const auto meta : midi)
     {
         const auto msg = meta.getMessage();
         const int at = juce::jlimit (0, numSamples, meta.samplePosition);
-        voices.render (buffer, *r, pos, at - pos, dry, wet);
+        voices.render (buffer, *r, pos, at - pos);
         pos = at;
-        if (msg.isNoteOn()) voices.start (msg.getFloatVelocity());
+        if (msg.isNoteOn())
+        {
+            const double rate = keytrack ? VoiceBank::rateForNote (msg.getNoteNumber(), root) : 1.0;
+            const VoiceStart vs = (align && rate != 1.0) ? VoiceBank::alignStart (r->hitIndex, rate) : VoiceStart {};
+            voices.start (msg.getFloatVelocity(), rate, vs);
+        }
     }
-    voices.render (buffer, *r, pos, numSamples - pos, dry, wet);
+    voices.render (buffer, *r, pos, numSamples - pos);
 
+    outputStage.process (buffer, outGainParam->load(), limiterParam->load() > 0.5f);
     playhead = voices.newestPosition();
 }
 
@@ -165,7 +207,7 @@ void ReverseVerbProcessor::render()
     const int latency = out->hitIndex > 0 ? out->hitIndex : 0;
     std::shared_ptr<RenderedSample> old;
     { juce::SpinLock::ScopedLockType l (renderLock); old = std::move (rendered); rendered = out; }
-    retired[retireIdx++ & 1u] = std::move (old);      // frees the render from two swaps ago, here, not on the audio thread
+    retired[retireIdx++ & 7u] = std::move (old);      // frees the render from eight swaps ago, here, not on the audio thread
     pendingLatency = param (IDs::align) > 0.5f ? latency : 0;
     if (wantPreview) triggerPreview();
 }
@@ -232,6 +274,16 @@ bool ReverseVerbProcessor::exportWav (const juce::File& dest)
         mix.applyGain (ch, 0, hitAt, wetParam->load());
         mix.applyGain (ch, hitAt, n - hitAt, dryParam->load());
     }
+    {   // same output stage as playback so the export matches what you hear
+        const float og = juce::Decibels::decibelsToGain (outGainParam->load(), -60.0f);
+        const bool lim = limiterParam->load() > 0.5f;
+        if (og != 1.0f || lim)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                float* d = mix.getWritePointer (ch);
+                for (int i = 0; i < n; ++i) d[i] = lim ? softClip (d[i] * og) : d[i] * og;
+            }
+    }
     dest.deleteFile();
     std::unique_ptr<juce::FileOutputStream> os (dest.createOutputStream());
     if (os == nullptr || ! os->openedOk()) return false;
@@ -249,6 +301,7 @@ void ReverseVerbProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("file", currentFile.getFullPathName(), nullptr);
+    state.setProperty ("stateVersion", 2, nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary (*xml, destData);
 }
 
@@ -261,7 +314,7 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
         apvts.replaceState (state);
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
-        dirty = true;
+        renderBlocking();               // project load: audio is ready before the first note / offline bounce
     }
 }
 

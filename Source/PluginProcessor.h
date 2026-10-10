@@ -6,6 +6,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "Params.h"
+#include "OutputStage.h"
 #include "Voices.h"
 #include "dsp/RenderEngine.h"
 
@@ -44,6 +45,11 @@ public:
     int getSampleIndex() const { return currentIndex; }
     int getSampleCount() const { return folderFiles.size(); }
 
+    void renderBlocking();                          // render now with current parameters (message / non-realtime thread)
+    float takePeak (int ch) { return outputStage.takePeak (ch); }
+    bool clipLatched() const { return outputStage.clipLatched(); }
+    void clearClip() { outputStage.clearClip(); }
+
     void triggerPreview() { triggerRequest = 1; }
     void stopAll() { stopRequest = 1; }
     bool exportWav (const juce::File& dest);
@@ -78,7 +84,7 @@ private:
     struct RenderThread : public juce::Thread
     {
         explicit RenderThread (ReverseVerbProcessor& o) : juce::Thread ("ReverseVerb render"), owner (o) {}
-        void run() override { while (! threadShouldExit()) { wait (-1); if (threadShouldExit()) break; owner.render(); } }
+        void run() override { while (! threadShouldExit()) { wait (-1); if (threadShouldExit()) break; owner.render(); sleep (20); } }   // >=20 ms between swaps (crossfade safety)
         ReverseVerbProcessor& owner;
     };
     std::unique_ptr<RenderThread> renderThread;
@@ -87,7 +93,7 @@ private:
     RenderCache cache;
     int sourceVersion = 0;                              // guarded by sourceLock
     std::atomic<int> pendingLatency { -1 };             // applied on the message thread
-    std::array<std::shared_ptr<RenderedSample>, 2> retired;  // old renders freed on the render thread, never the audio thread
+    std::array<std::shared_ptr<RenderedSample>, 8> retired;  // old renders freed on the render thread, never the audio thread
     unsigned retireIdx = 0;
 
     mutable juce::SpinLock renderLock;
@@ -100,8 +106,15 @@ private:
     std::atomic<int> triggerRequest { 0 }, stopRequest { 0 }, playhead { -1 };
 
     VoiceBank voices;
+    OutputStage outputStage;
+    std::shared_ptr<const RenderedSample> lastBuffer;   // audio thread only: detects buffer swaps for the crossfade
     std::atomic<float>* dryParam = nullptr;
     std::atomic<float>* wetParam = nullptr;
+    std::atomic<float>* alignParam = nullptr;
+    std::atomic<float>* keytrackParam = nullptr;
+    std::atomic<float>* rootParam = nullptr;
+    std::atomic<float>* outGainParam = nullptr;
+    std::atomic<float>* limiterParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ReverseVerbProcessor)
 };

@@ -10,7 +10,7 @@ using namespace RVColours;
 // ---------------- Editor ----------------
 
 ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension)
+    : AudioProcessorEditor (&p), proc (p), waveform (p), shape (p), dragPad (p), pitchTension (p, IDs::pitchTension), meter (p)
 {
     setLookAndFeel (&lnf);
     applyTooltipSetting();
@@ -35,7 +35,9 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
 
     for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &optionsButton, &helpButton })
         addAndMakeVisible (b);
-    for (auto* t : { &alignToggle, &syncToggle }) addAndMakeVisible (t);
+    for (auto* t : { &alignToggle, &syncToggle, &keytrackToggle, &limiterToggle }) addAndMakeVisible (t);
+    addAndMakeVisible (meter);
+    addAndMakeVisible (rootCombo);
     addAndMakeVisible (waveform);
     addAndMakeVisible (shape);
     addAndMakeVisible (dragPad);
@@ -47,6 +49,10 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     addAndMakeVisible (rangeCombo);
     syncComboAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::syncLen, syncCombo);
     rangeComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::pitchRange, rangeCombo);
+    for (int n = 0; n < 128; ++n) rootCombo.addItem (juce::MidiMessage::getMidiNoteName (n, true, true, 4), n + 1);
+    rootComboAtt = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, IDs::rootNote, rootCombo);
+    keytrackAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::keytrack, keytrackToggle);
+    limiterAtt   = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::limiter, limiterToggle);
     alignAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::align, alignToggle);
     syncAtt  = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, IDs::sync, syncToggle);
 
@@ -89,6 +95,8 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     kBass = &makeKnob (IDs::basscut, "BASS CUT");
     kDry = &makeKnob (IDs::dry, "HIT");          kWet = &makeKnob (IDs::wet, "SWELL");
     kPitch = &makeKnob (IDs::pitch, "PITCH");
+    kOut = &makeKnob (IDs::outGain, "OUT");
+    kOut->slider.getProperties().set ("unipolar", true);
     kVolStart = &makeKnob (IDs::volStart, "START"); kVolEnd = &makeKnob (IDs::volEnd, "END"); kVolTension = &makeKnob (IDs::volTension, "TENSION");
     kDry->slider.setColour (juce::Slider::rotarySliderFillColourId, hitCol);
 
@@ -107,6 +115,10 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     rangeCombo.setTooltip ("Choose the available pitch-bend range.");
     waveform.setTooltip ("Edit sample trim and volume-envelope points directly on the waveform.");
     dragPad.setTooltip ("Drag the rendered result out to a DAW or file destination.");
+    keytrackToggle.setTooltip ("Play the swell chromatically: notes above or below the root note change its pitch and length.");
+    rootCombo.setTooltip ("Root note: the MIDI note that plays the sound at its original pitch (C4 = MIDI 60).");
+    limiterToggle.setTooltip ("Safety soft limiter on the output. Keeps peaks below 0 dBFS. Also applied to exported WAVs.");
+    meter.setTooltip ("Output peak meter. The light latches when the output reaches the ceiling; click to clear.");
     pitchTension.setTooltip ("Adjust pitch-envelope tension. Double-click to reset.");
 
 
@@ -233,6 +245,9 @@ void ReverseVerbEditor::resized()
     header.removeFromRight (4);
     optionsButton.setBounds (header.removeFromRight (76).reduced (0, 7));
     header.removeFromRight (10);
+    limiterToggle.setBounds (header.removeFromRight (62).reduced (0, 12));
+    meter.setBounds (header.removeFromRight (74).reduced (0, 9));
+    header.removeFromRight (10);
     auto browser = header.withTrimmedLeft (20);
     loadButton.setBounds (browser.removeFromRight (80).reduced (0, 7));
     browser.removeFromRight (8);
@@ -258,7 +273,9 @@ void ReverseVerbEditor::resized()
     dragPad.setBounds (row.removeFromLeft (120));       row.removeFromLeft (6);
     resetButton.setBounds (row.removeFromLeft (100));   row.removeFromLeft (6);
     randomButton.setBounds (row.removeFromLeft (80));   row.removeFromLeft (14);
-    alignToggle.setBounds (row.removeFromLeft (150));   row.removeFromLeft (10);
+    alignToggle.setBounds (row.removeFromLeft (150));   row.removeFromLeft (6);
+    keytrackToggle.setBounds (row.removeFromLeft (92)); row.removeFromLeft (4);
+    rootCombo.setBounds (row.removeFromLeft (70).reduced (0, 3)); row.removeFromLeft (10);
     syncCombo.setBounds (row.removeFromRight (100));    row.removeFromRight (6);
     syncToggle.setBounds (row.removeFromRight (70));
 
@@ -282,8 +299,8 @@ void ReverseVerbEditor::resized()
 
     const int total = rowB.getWidth() - 8 * 3;
     const int unit = total / 11;
-    layoutKnobs (group (rowB, unit * 4, "SWELL"), { kTail, kShape, kTone, kBass });
-    layoutKnobs (group (rowB, unit * 2, "MIX"), { kDry, kWet });
+    layoutKnobs (group (rowB, (int) ((float) unit * 3.5f), "SWELL"), { kTail, kShape, kTone, kBass });
+    layoutKnobs (group (rowB, (int) ((float) unit * 2.7f), "MIX"), { kDry, kWet, kOut });
     auto pitchArea = group (rowB, unit * 2 + 30, "PITCH");
     {
         auto right = pitchArea.removeFromRight (74);

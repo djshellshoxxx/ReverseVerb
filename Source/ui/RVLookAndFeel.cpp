@@ -41,7 +41,7 @@ void RVLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, in
     const float cx = bounds.getCentreX(), cy = bounds.getCentreY();
     const float angle = startAngle + pos * (endAngle - startAngle);
     const float arcR = radius - 3.0f;
-    const bool bipolar = s.getMinimum() < 0.0;
+    const bool bipolar = s.getMinimum() < 0.0 && ! (bool) s.getProperties()["unipolar"];
     const juce::Colour col = s.findColour (juce::Slider::rotarySliderFillColourId, true);
 
     juce::Path track;
