@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(ReverseVerb VERSION 1.0.0)
+
+option(RV_BUILD_TESTS "Build the ReverseVerb unit tests" ON)
+option(RV_SANITIZE "Build tests with AddressSanitizer + UBSan (GCC/Clang). Disables LTO to keep the build small." OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -67,12 +70,17 @@ target_compile_definitions(ReverseVerb PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 
+# LTO + AddressSanitizer makes the CI sanitizer build too large for a small runner; skip LTO there.
+if(RV_SANITIZE)
+    set(RV_LTO_TARGET "")
+else()
+    set(RV_LTO_TARGET juce::juce_recommended_lto_flags)
+endif()
+
 target_link_libraries(ReverseVerb
     PRIVATE ReverseVerbPresets juce::juce_audio_utils
-    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+    PUBLIC juce::juce_recommended_config_flags ${RV_LTO_TARGET} juce::juce_recommended_warning_flags)
 
-option(RV_BUILD_TESTS "Build the ReverseVerb unit tests" ON)
-option(RV_SANITIZE "Build tests with AddressSanitizer + UBSan (GCC/Clang)" OFF)
 if(RV_BUILD_TESTS)
     enable_testing()
     juce_add_console_app(ReverseVerbTests PRODUCT_NAME "ReverseVerbTests")

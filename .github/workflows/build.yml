@@ -75,6 +75,7 @@ jobs:
   sanitizers:
     name: Tests (ASan + UBSan)
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Linux dependencies
@@ -83,9 +84,9 @@ jobs:
           sudo apt-get install -y libasound2-dev libfreetype-dev libfontconfig1-dev libx11-dev \
             libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libgl-dev
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DRV_SANITIZE=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE="-O1 -g0 -DNDEBUG" -DRV_SANITIZE=ON
       - name: Build tests
-        run: cmake --build build --target ReverseVerbTests --parallel
+        run: cmake --build build --target ReverseVerbTests --parallel 2
       - name: Run tests under sanitizers
         env:
           RV_FUZZ_N: 40
