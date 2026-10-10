@@ -40,6 +40,7 @@ public:
     void restoreName (const juce::String& name);            // after project load: re-attach snapshot for dirty detection
     bool isDirty() const;
     bool includeTrim = false;
+    std::function<void()> onBatchBegin, onBatchEnd;         // wrap multi-parameter changes (undo grouping)
 
     // A/B compare (in-memory)
     void toggleAB();

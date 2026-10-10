@@ -44,6 +44,7 @@ juce_generate_juce_header(ReverseVerb)
 target_sources(ReverseVerb PRIVATE
     Source/Params.cpp
     Source/PresetManager.cpp
+    Source/UndoHistory.cpp
     Source/PluginEditor.cpp
     Source/PluginProcessor.cpp
     Source/Voices.cpp
@@ -77,6 +78,7 @@ if(RV_BUILD_TESTS)
     target_sources(ReverseVerbTests PRIVATE
         Tests/PresetTests.cpp
         Tests/RenderTests.cpp
+        Tests/UndoTests.cpp
         Tests/UiTests.cpp
         Tests/VoiceTests.cpp
         Tests/TestMain.cpp)

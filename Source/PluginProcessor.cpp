@@ -12,6 +12,9 @@ ReverseVerbProcessor::ReverseVerbProcessor()
 {
     formatManager.registerBasicFormats();
     presets = std::make_unique<PresetManager> (apvts, PresetManager::defaultUserFolder());
+    undo = std::make_unique<UndoHistory> (*this);
+    presets->onBatchBegin = [this] { undo->beginGroup(); };
+    presets->onBatchEnd   = [this] { undo->endGroup(); };
     for (auto* id : { &IDs::size, &IDs::decay, &IDs::damp, &IDs::diff, &IDs::er, &IDs::sep, &IDs::width, &IDs::gap,
                       &IDs::tail, &IDs::shape, &IDs::tone, &IDs::basscut, &IDs::align, &IDs::trimStart, &IDs::trimEnd,
                       &IDs::sync, &IDs::syncLen, &IDs::pitch, &IDs::pitchRange, &IDs::pitchTension,
@@ -50,6 +53,7 @@ void ReverseVerbProcessor::setParam (const juce::String& id, float value)
 
 void ReverseVerbProcessor::resetEdits()
 {
+    UndoHistory::Group g (*undo);
     setParam (IDs::trimStart, 0.0f);  setParam (IDs::trimEnd, 1.0f);
     setParam (IDs::pitch, 0.0f);      setParam (IDs::pitchTension, 0.0f);
     setParam (IDs::volStart, 1.0f);   setParam (IDs::volEnd, 1.0f);  setParam (IDs::volTension, 0.0f);
@@ -57,6 +61,7 @@ void ReverseVerbProcessor::resetEdits()
 
 void ReverseVerbProcessor::randomizeReverb()
 {
+    UndoHistory::Group g (*undo);
     auto& rng = juce::Random::getSystemRandom();
     setParam (IDs::size,  rng.nextFloat());
     setParam (IDs::decay, 0.4f + 0.6f * rng.nextFloat());
@@ -321,6 +326,7 @@ void ReverseVerbProcessor::setStateInformation (const void* data, int sizeInByte
         juce::File f (state.getProperty ("file", "").toString());
         if (f.existsAsFile()) loadSampleFile (f);
         presets->restoreName (state.getProperty ("presetName", "").toString());
+        undo->clear();                  // a loaded project starts a fresh undo history
         renderBlocking();               // project load: audio is ready before the first note / offline bounce
     }
 }

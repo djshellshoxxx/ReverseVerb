@@ -32,7 +32,7 @@ RVContent::RVContent (ReverseVerbProcessor& p)
     countLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (countLabel);
 
-    for (auto* b : { &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &optionsButton, &helpButton })
+    for (auto* b : { &undoButton, &redoButton, &prevButton, &nextButton, &loadButton, &playButton, &exportButton, &resetButton, &randomButton, &optionsButton, &helpButton })
         addAndMakeVisible (b);
     for (auto* t : { &alignToggle, &syncToggle, &keytrackToggle, &limiterToggle }) addAndMakeVisible (t);
     addAndMakeVisible (meter);
@@ -62,6 +62,10 @@ RVContent::RVContent (ReverseVerbProcessor& p)
     rangeLabel.setColour (juce::Label::textColourId, textDim);
     addAndMakeVisible (rangeLabel);
 
+    undoButton.onClick = [this] { proc.getUndo().undo(); };
+    redoButton.onClick = [this] { proc.getUndo().redo(); };
+    undoButton.setTooltip ("Undo the last edit (Ctrl/Cmd+Z). Host automation is not part of undo.");
+    redoButton.setTooltip ("Redo (Ctrl/Cmd+Shift+Z or Ctrl+Y).");
     prevButton.onClick   = [this] { proc.prevSample(); };
     nextButton.onClick   = [this] { proc.nextSample(); };
     playButton.onClick   = [this] { proc.triggerPreview(); };
@@ -153,6 +157,8 @@ RVContent::Knob& RVContent::makeKnob (const juce::String& id, const juce::String
 
 void RVContent::timerCallback()
 {
+    undoButton.setEnabled (proc.getUndo().canUndo());
+    redoButton.setEnabled (proc.getUndo().canRedo());
     auto f = proc.getCurrentFile();
     fileLabel.setText (f.existsAsFile() ? f.getFileName() : "no sample loaded", juce::dontSendNotification);
     const int n = proc.getSampleCount();
@@ -250,7 +256,12 @@ void RVContent::resized()
     // header
     auto header = area.removeFromTop (54);
     auto titleArea = header.removeFromLeft (310);
-    title.setBounds (titleArea.removeFromTop (28));
+    {
+        auto top = titleArea.removeFromTop (28);
+        redoButton.setBounds (top.removeFromRight (54).reduced (0, 3)); top.removeFromRight (4);
+        undoButton.setBounds (top.removeFromRight (54).reduced (0, 3)); top.removeFromRight (6);
+        title.setBounds (top);
+    }
     presetBar.setBounds (titleArea.reduced (0, 2));
     helpButton.setBounds (header.removeFromRight (34).reduced (0, 11));
     header.removeFromRight (4);
@@ -349,6 +360,7 @@ ReverseVerbEditor::ReverseVerbEditor (ReverseVerbProcessor& p)
     constrainer.setFixedAspectRatio ((double) kBaseW / (double) kBaseH);
     setConstrainer (&constrainer);
     setResizable (true, true);
+    setWantsKeyboardFocus (true);
 
     const int w = juce::jlimit (kMinW, kMaxW, proc.getUiWidth());
     setSize (w, juce::roundToInt ((float) w * (float) kBaseH / (float) kBaseW));
@@ -360,4 +372,14 @@ void ReverseVerbEditor::resized()
     content.setTransform (juce::AffineTransform::scale (s));
     content.setBounds (0, 0, kBaseW, kBaseH);
     proc.setUiSize (getWidth(), getHeight());
+}
+
+bool ReverseVerbEditor::keyPressed (const juce::KeyPress& key)
+{
+    const auto m = key.getModifiers();
+    if (! m.isCommandDown()) return false;
+    const auto c = juce::CharacterFunctions::toUpperCase ((juce::juce_wchar) key.getKeyCode());
+    if (c == 'Z' && ! m.isShiftDown()) { proc.getUndo().undo(); return true; }
+    if ((c == 'Z' && m.isShiftDown()) || c == 'Y') { proc.getUndo().redo(); return true; }
+    return false;
 }

@@ -49,6 +49,7 @@ private:
     RVLookAndFeel lnf;
 
     juce::Label title, subtitle, fileLabel, countLabel, syncLabel, rangeLabel;
+    juce::TextButton undoButton { "UNDO" }, redoButton { "REDO" };
     juce::TextButton prevButton { "<" }, nextButton { ">" }, loadButton { "LOAD" }, playButton { "PLAY" },
                      exportButton { "EXPORT WAV" }, resetButton { "RESET EDITS" }, randomButton { "RANDOM" }, optionsButton { "OPTIONS" }, helpButton { "?" };
     juce::ToggleButton alignToggle { "Hit on note (PDC)" }, syncToggle { "SYNC" }, keytrackToggle { "KEYTRACK" }, limiterToggle { "LIMIT" };
@@ -81,6 +82,7 @@ public:
     static constexpr int kBaseW = 1060, kBaseH = 720, kMinW = 795, kMaxW = 1590;
     explicit ReverseVerbEditor (ReverseVerbProcessor&);
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
 
 private:
     ReverseVerbProcessor& proc;

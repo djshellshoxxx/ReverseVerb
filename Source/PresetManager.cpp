@@ -144,6 +144,7 @@ bool PresetManager::parse (const juce::XmlElement& xml, Values& out, juce::Strin
 
 bool PresetManager::applyValues (const Values& values)
 {
+    if (onBatchBegin) onBatchBegin();
     for (auto* p : apvts.processor.getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
         {
@@ -154,6 +155,7 @@ bool PresetManager::applyValues (const Values& values)
             rp->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, norm));
             rp->endChangeGesture();
         }
+    if (onBatchEnd) onBatchEnd();
     return true;
 }
 

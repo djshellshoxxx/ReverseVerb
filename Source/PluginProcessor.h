@@ -8,6 +8,7 @@
 #include "Params.h"
 #include "OutputStage.h"
 #include "PresetManager.h"
+#include "UndoHistory.h"
 #include "Voices.h"
 #include "dsp/RenderEngine.h"
 
@@ -47,6 +48,7 @@ public:
     int getSampleCount() const { return folderFiles.size(); }
 
     PresetManager& getPresets() { return *presets; }
+    UndoHistory& getUndo() { return *undo; }
 
     int getUiWidth() const { return uiW.load(); }
     int getUiHeight() const { return uiH.load(); }
@@ -114,6 +116,7 @@ private:
 
     std::atomic<int> uiW { 1060 }, uiH { 720 };          // editor size, saved with the project
     std::unique_ptr<PresetManager> presets;
+    std::unique_ptr<UndoHistory> undo;
     VoiceBank voices;
     OutputStage outputStage;
     std::shared_ptr<const RenderedSample> lastBuffer;   // audio thread only: detects buffer swaps for the crossfade

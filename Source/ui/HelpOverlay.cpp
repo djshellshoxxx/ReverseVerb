@@ -11,6 +11,9 @@ using namespace RVColours;
 
 static const char* kHelpText = R"(REVERSE VERB - what everything does
 
+UNDO / REDO
+  UNDO and REDO (top left, or Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z) step back and forward through your edits: knob drags, waveform handles, RANDOM, RESET EDITS and preset loads each count as one step. Host automation is not recorded. Loading a different sample is not undoable.
+
 PRESETS
   The bar at the top left browses presets: < > step through them, the name opens the list (Factory and User), SAVE stores the current settings, and A/B switches between two sets of settings so you can compare. A * after the name means you changed something since loading it.
   Presets store the sound settings only - not the sample or the trim points. User presets live in your application-data folder (menu > Open preset folder).
