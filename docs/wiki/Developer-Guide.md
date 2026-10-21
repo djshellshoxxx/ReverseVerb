@@ -14,7 +14,7 @@ build/ReverseVerbTests_artefacts/Release/ReverseVerbTests   # golden render, fuz
 - The golden baseline is `Tests/data/golden.txt`. Regenerate deliberately with `RV_WRITE_GOLDEN=1`.
 - CI runs the tests on Windows and Linux, plus sanitizers and pluginval.
 
-JUCE is fetched by CMake `FetchContent` (JUCE 8.0.4 in `CMakeLists.txt`; the README says 8.0.7, so check which tag is in use).
+JUCE is fetched by CMake `FetchContent` (tag 8.0.4 in `CMakeLists.txt`).
 
 ## Where the tests are
 
